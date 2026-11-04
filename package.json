@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "prepackage": "node build/fix-cache.js",
     "package": "npm run build && electron-builder --win nsis",
     "typecheck": "tsc --noEmit"
   },
@@ -52,8 +53,10 @@
     "win": {
       "target": "nsis",
       "icon": "resources/icon.png",
-      "sign": "./build/sign.js",
-      "signingHashAlgorithms": []
+"signtoolOptions": {
+        "sign": "./build/sign.js",
+        "signingHashAlgorithms": []
+      }
     },
     "nsis": {
       "oneClick": false,
