@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-1: #16191C;
+  --bg-2: #1D2125;
+}
+
+@layer base {
+  body {
+    @apply bg-bg-0 text-text-1 font-body;
+    margin: 0;
+  }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { @apply bg-bg-0; }
+  ::-webkit-scrollbar-thumb { @apply bg-bg-2 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-border; }
+}
+
+@layer utilities {
+  .skeleton-shimmer {
+    background: linear-gradient(90deg, var(--bg-1) 25%, var(--bg-2) 50%, var(--bg-1) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
