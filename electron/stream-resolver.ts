@@ -33,7 +33,10 @@ function broadcast(channel: string, payload: unknown) {
 function hardenStreamingSession() {
   const ses = session.fromPartition(STREAM_PARTITION)
   // Playback controller (speed + adaptive quality) in every frame, before page scripts.
-  ses.setPreloads([path.join(__dirname, 'stream-preload.js')])
+  const preload = path.join(__dirname, 'stream-preload.js')
+  const anySes = ses as any
+  if (typeof anySes.registerPreloadScript === 'function') anySes.registerPreloadScript({ type: 'frame', filePath: preload })
+  else anySes.setPreloads([preload])
   ses.setUserAgent(ses.getUserAgent().replace(/\s?(Electron|senpai)\/\S+/gi, ''))
 
   ses.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, cb) => {
@@ -70,8 +73,9 @@ export function guardWebview(contents: Electron.WebContents) {
       broadcast('stream:blocked', { kind: 'navigation', detail: hostOf(url) || url })
     }
   }
-  contents.on('will-navigate', (e, url) => guard(e, url))
-  contents.on('will-redirect', (e, url, _inPlace, isMainFrame) => guard(e, url, isMainFrame))
+  // Newer Electron passes details on the event; older versions as positional args.
+  contents.on('will-navigate', (e: any, url: string) => guard(e, e?.url ?? url, e?.isMainFrame ?? true))
+  contents.on('will-redirect', (e: any, url: string, _inPlace: boolean, isMainFrame: boolean) => guard(e, e?.url ?? url, e?.isMainFrame ?? isMainFrame))
 }
 
 function streamWebview(wcId: number): Electron.WebContents | null {
