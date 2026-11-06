@@ -3,6 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import { initDatabase, registerAllHandlers, getAppState, setAppState } from './database'
 import { registerStreamHandlers, guardWebview, getEngine, flushStreamState, STREAM_PARTITION } from './stream-resolver'
+import { registerAccountHandlers } from './accounts'
 
 const isDev = !app.isPackaged
 
@@ -161,6 +162,7 @@ app.whenReady().then(async () => {
   }
   registerAllHandlers(ipcMain)
   registerStreamHandlers(getAppState, setAppState)
+  registerAccountHandlers()
   createWindow()
   startExtensionServer()
 })

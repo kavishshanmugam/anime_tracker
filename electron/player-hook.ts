@@ -326,6 +326,7 @@ export function playerHook() {
     }
     if (prefs && prefs.subs && !S.subPref) S.subPref = { on: prefs.subs.on !== false, lang: prefs.subs.lang || 'en' }
     if (prefs && prefs.audio) S.audio = prefs.audio
+    if (prefs && prefs.flags) S.flags = prefs.flags
     bind(v)
     const a = adapter(v)
     const levels = a ? a.levels() : []
@@ -341,6 +342,7 @@ export function playerHook() {
         return { tracks, current: c ? c.current() : -1, on: S.subPref ? S.subPref.on : true, lang: S.subPref ? S.subPref.lang : 'en' }
       })(),
       audio: S.audio,
+      flags: S.flags || { autoplay: true, autoSkip: false },
       requests: drain ? S.requests.splice(0) : [],
     }
   }
@@ -355,6 +357,12 @@ export function playerHook() {
     return true
   }
   /** Ask the app to switch Sub/Dub (needs a new source, so the app handles it). */
+  /** Playback toggles live in the app's settings; the menu asks the app to change them. */
+  S.requestFlag = (name: string, value: boolean) => {
+    S.flags = { ...(S.flags || { autoplay: true, autoSkip: false }), [name === 'autoskip' ? 'autoSkip' : 'autoplay']: value }
+    S.requests.push({ type: name, value })
+    return true
+  }
   S.requestAudio = (a: string) => { S.requests.push({ type: 'audio', value: a === 'dub' ? 'dub' : 'sub' }); S.audio = a; return true }
   S.setQuality = (mode: string, index?: number) => {
     S.mode = mode
@@ -449,7 +457,9 @@ export function playerUi() {
         <button class="row" data-go="speed">Playback speed <span class="val">${st ? fmtRate(st.rate) : ''} ›</span></button>
         <button class="row" data-go="quality">Quality <span class="val">${esc(qualityText(st))} ›</span></button>
         <button class="row" data-go="subs">Subtitles <span class="val">${esc(subsText(st))} ›</span></button>
-        <button class="row" data-go="audio">Audio <span class="val">${st && st.audio === 'dub' ? 'Dub' : 'Sub'} ›</span></button>`
+        <button class="row" data-go="audio">Audio <span class="val">${st && st.audio === 'dub' ? 'Dub' : 'Sub'} ›</span></button>
+        <button class="row" data-flag="autoplay">Autoplay next episode <span class="val">${st && st.flags && st.flags.autoplay === false ? 'Off' : 'On'}</span></button>
+        <button class="row" data-flag="autoskip">Auto-skip intro <span class="val">${st && st.flags && st.flags.autoSkip ? 'On' : 'Off'}</span></button>`
     } else if (view === 'speed') {
       panel.innerHTML = `<div class="head"><button class="back" data-go="main">‹</button>Playback speed</div>` +
         SPEEDS.map(r => `<button class="row ${st && Math.abs(st.rate - r) < 0.01 ? 'sel' : ''}" data-rate="${r}">${r === 1 ? 'Normal' : fmtRate(r)}${st && Math.abs(st.rate - r) < 0.01 ? '<span class="val">✓</span>' : ''}</button>`).join('')
@@ -492,6 +502,11 @@ export function playerUi() {
     else if (t.dataset.level) { S.setQuality('manual', Number(t.dataset.level)); view = null }
     else if (t.dataset.sub) { S.setSubs(Number(t.dataset.sub)); view = null }
     else if (t.dataset.audio) { S.requestAudio(t.dataset.audio); view = null }
+    else if (t.dataset.flag) {
+      const st = info()
+      const cur = t.dataset.flag === 'autoskip' ? !!(st && st.flags && st.flags.autoSkip) : !(st && st.flags && st.flags.autoplay === false)
+      S.requestFlag(t.dataset.flag, !cur)
+    }
     render()
     poke()
   })

@@ -73,6 +73,13 @@ contextBridge.exposeInMainWorld('api', {
       return () => { ipcRenderer.removeListener('stream:stateChanged', fn) }
     },
   },
+  accounts: {
+    status: () => ipcRenderer.invoke('accounts:status'),
+    setClientId: (service: 'anilist' | 'mal', clientId: string) => ipcRenderer.invoke('accounts:setClientId', service, clientId),
+    login: (service: 'anilist' | 'mal') => ipcRenderer.invoke('accounts:login', service),
+    logout: (service: 'anilist' | 'mal') => ipcRenderer.invoke('accounts:logout', service),
+    syncAll: () => ipcRenderer.invoke('accounts:syncAll'),
+  },
   app: {
     getDataPath: () => ipcRenderer.invoke('app:getDataPath'),
     onDeepLink: (callback: (url: string) => void) => {

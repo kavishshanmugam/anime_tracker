@@ -13,8 +13,10 @@ import { ensureLocal, watchPath } from '@/lib/watch'
 import { computeUpNext, timeUntil, type ScheduleRow } from '@/lib/upnext'
 import { useDubs } from '@/hooks/useDubs'
 import { progressAfterWatching } from '@/lib/progress'
+import { getResume, loadResume } from '@/lib/resume'
 import type { AniListMedia, AnimeWithEntry } from '@/types'
 import { displayTitle } from '@/lib/title'
+import { announceCompleted } from '@/components/FinishedModal'
 
 function currentSeason() {
   const m = new Date().getMonth()
@@ -35,6 +37,8 @@ export default function Home() {
   const [epMeta, setEpMeta] = useState<Record<number, Map<number, EpisodeMeta>>>({})
   const [schedule, setSchedule] = useState<ScheduleRow[]>([])
   const [cardMenu, setCardMenu] = useState<number | null>(null)
+  const [, setResumeReady] = useState(0)
+  useEffect(() => { loadResume().then(() => setResumeReady(v => v + 1)).catch(() => {}) }, [])
   const [now, setNow] = useState(Date.now())
   const dubOf = useDubs()
   const [recs, setRecs] = useState<Recommendation[]>([])
@@ -125,6 +129,7 @@ export default function Home() {
         ? { my_status: 'completed', progress: item.episodes_total ?? item.entry?.progress ?? 0, finished_at: today }
         : { my_status: status })
       toast(status === 'completed' ? `${displayTitle(item)} marked completed` : status === 'dropped' ? `Dropped ${displayTitle(item)}` : `${displayTitle(item)} put on hold`)
+      if (status === 'completed') announceCompleted(item.id)
     } catch { toast('Failed to update') }
   }
 
@@ -135,6 +140,7 @@ export default function Home() {
       await updateEntry(item.id, updates)
       await window.api?.db.addWatchEvent({ anime_id: item.id, episode: next, source: 'manual', watched_at: new Date().toISOString() })
       toast(updates.my_status === 'completed' ? 'Completed!' : `Marked E${next} watched`)
+      if (updates.my_status === 'completed') announceCompleted(item.id)
     } catch { toast('Failed to update') }
   }
 
@@ -213,7 +219,7 @@ export default function Home() {
               <p className="font-display text-lg font-bold text-text-1">Bring your list with you</p>
               <p className="text-sm text-text-2">Import from MyAnimeList or AniList and your progress shows up here.</p>
             </div>
-            <button onClick={() => navigate('/settings')} className="rounded-[4px] bg-accent px-5 py-2.5 text-sm font-bold uppercase text-white hover:bg-accent-hover">
+            <button onClick={() => navigate('/settings?tab=library')} className="rounded-[4px] bg-accent px-5 py-2.5 text-sm font-bold uppercase text-white hover:bg-accent-hover">
               Import list
             </button>
           </div>
@@ -240,8 +246,8 @@ export default function Home() {
                   <EpisodeCard
                     seriesTitle={displayTitle(e)} episode={next} episodeTitle={meta?.title}
                     thumbnail={meta?.thumbnail} fallback={e.banner_url ?? e.cover_url}
-                    progress={e.episodes_total ? (e.entry?.progress ?? 0) / e.episodes_total : undefined}
-                    badge={badge}
+                    progress={(() => { const r = getResume(e.id, next); return r ? r.t / r.d : e.episodes_total ? (e.entry?.progress ?? 0) / e.episodes_total : undefined })()}
+                    badge={getResume(e.id, next) ? <span className="rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-text-1">Resume</span> : badge}
                     onClick={() => navigate(watchPath(e, next))}
                   />
                   <div className={`absolute right-2 top-2 flex gap-1 transition-opacity ${cardMenu === e.id ? 'opacity-100' : 'opacity-0 group-hover/cw:opacity-100'}`}>

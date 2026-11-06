@@ -103,7 +103,7 @@ async function inVideoFrame<T>(wcId: number, script: string): Promise<T | null> 
 }
 
 type PlayerCommand =
-  | { type: 'state'; prefs?: { rate?: number; mode?: 'max' | 'auto'; subs?: { on?: boolean; lang?: string }; audio?: 'sub' | 'dub' } }
+  | { type: 'state'; prefs?: { rate?: number; mode?: 'max' | 'auto'; subs?: { on?: boolean; lang?: string }; audio?: 'sub' | 'dub'; flags?: { autoplay?: boolean; autoSkip?: boolean } } }
   | { type: 'rate'; rate: number }
   | { type: 'quality'; mode: 'max' | 'auto' | 'manual'; index?: number }
   | { type: 'seek'; time: number }
@@ -118,6 +118,7 @@ function playerScript(cmd: PlayerCommand): string | null {
         mode: cmd.prefs?.mode === 'auto' ? 'auto' : 'max',
         subs: { on: cmd.prefs?.subs?.on !== false, lang },
         audio: cmd.prefs?.audio === 'dub' ? 'dub' : 'sub',
+        flags: { autoplay: cmd.prefs?.flags?.autoplay !== false, autoSkip: cmd.prefs?.flags?.autoSkip === true },
       }
       return `window.__senpai.state(${JSON.stringify(prefs)})`
     }

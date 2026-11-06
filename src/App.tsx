@@ -1,4 +1,5 @@
 import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom'
+import FinishedModal from '@/components/FinishedModal'
 import { useState } from 'react'
 import { ToastProvider } from '@/hooks/useToast'
 import { LibraryProvider, useLibrary } from '@/hooks/useLibrary'
@@ -75,6 +76,7 @@ export default function App() {
       <ToastProvider>
         <LibraryProvider>
           <AppRoutes />
+          <FinishedModal />
         </LibraryProvider>
       </ToastProvider>
     </Router>

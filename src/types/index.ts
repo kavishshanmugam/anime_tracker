@@ -31,6 +31,9 @@ export interface ResolveResult {
   audioFallback?: boolean
 }
 
+export interface AccountView { clientId: string; connected: boolean; user: string | null; lastSync: number | null; lastError: string | null; expiresAt: number | null }
+export interface AccountsStatus { anilist: AccountView | null; mal: AccountView | null; anilistRedirect: string; malRedirect: string }
+
 export interface PlayerState {
   time: number
   duration: number
@@ -54,7 +57,7 @@ export interface PlayerState {
   subs: { tracks: string[]; current: number; on: boolean; lang: string }
   audio: 'sub' | 'dub'
   /** Requests from the in-player ⚙ menu that need the app (e.g. switch to Dub). */
-  requests: { type: 'audio'; value: 'sub' | 'dub' }[]
+  requests: ({ type: 'audio'; value: 'sub' | 'dub' } | { type: 'autoplay'; value: boolean } | { type: 'autoskip'; value: boolean })[]
 }
 
 export interface SafetyCheck { id: string; label: string; status: 'pass' | 'warn' | 'fail' | 'info'; detail: string }
@@ -274,7 +277,7 @@ export interface ElectronAPI {
     prefetch: (title: string, titleEn?: string) => Promise<void>
     cancelPrefetch: (title: string) => Promise<void>
     player: {
-      (webContentsId: number, cmd: { type: 'state'; prefs?: { rate?: number; mode?: 'max' | 'auto'; subs?: { on: boolean; lang: string }; audio?: 'sub' | 'dub' } }): Promise<PlayerState | null>
+      (webContentsId: number, cmd: { type: 'state'; prefs?: { rate?: number; mode?: 'max' | 'auto'; subs?: { on: boolean; lang: string }; audio?: 'sub' | 'dub'; flags?: { autoplay: boolean; autoSkip: boolean } } }): Promise<PlayerState | null>
       (webContentsId: number, cmd: { type: 'rate'; rate: number }): Promise<boolean | null>
       (webContentsId: number, cmd: { type: 'quality'; mode: 'max' | 'auto' | 'manual'; index?: number }): Promise<boolean | null>
       (webContentsId: number, cmd: { type: 'seek'; time: number }): Promise<boolean | null>
@@ -303,6 +306,13 @@ export interface ElectronAPI {
     readFile: (path: string) => Promise<string>
     selectSavePath: (defaultName?: string, filters?: { name: string; extensions: string[] }[]) => Promise<string | null>
     writeFile: (path: string, content: string) => Promise<void>
+  }
+  accounts: {
+    status: () => Promise<AccountsStatus>
+    setClientId: (service: 'anilist' | 'mal', clientId: string) => Promise<AccountsStatus>
+    login: (service: 'anilist' | 'mal') => Promise<{ ok: boolean; message: string }>
+    logout: (service: 'anilist' | 'mal') => Promise<AccountsStatus>
+    syncAll: () => Promise<AccountsStatus & { pushed: number }>
   }
   app: {
     getDataPath: () => Promise<string>

@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useToast } from '@/hooks/useToast'
 import { parseMALExport, type MALImportResult } from '@/lib/mal-import'
 import { enrichBareEntries } from '@/lib/sync'
 import { getUserAnimeList, mapAniListToAnime } from '@/lib/anilist'
 import type { MyStatus } from '@/types'
 import SourcesSettings from '@/components/SourcesSettings'
+import AccountsSettings from '@/components/AccountsSettings'
 
 const STATUS_LABELS: Record<MyStatus, string> = {
   watching: 'Watching',
@@ -15,6 +17,9 @@ const STATUS_LABELS: Record<MyStatus, string> = {
 }
 
 export default function Settings() {
+  const [params, setParams] = useSearchParams()
+  const tab = (['playback', 'sources', 'accounts', 'library', 'about'].includes(params.get('tab') ?? '') ? params.get('tab') : 'playback') as SettingsTab
+  const setTab = (t: SettingsTab) => setParams({ tab: t }, { replace: true })
   const { toast } = useToast()
   const [dataPath, setDataPath] = useState('')
   const [malResult, setMalResult] = useState<MALImportResult | null>(null)
@@ -185,10 +190,63 @@ export default function Settings() {
     setEnriching(false)
   }
 
+  const tabBtn = (id: SettingsTab, label: string) => (
+    <button key={id} onClick={() => setTab(id)}
+      className={`relative whitespace-nowrap pb-3 text-sm font-bold uppercase tracking-wide transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-[3px] after:rounded-full ${
+        tab === id ? 'text-text-1 after:bg-accent' : 'text-text-3 hover:text-text-1 after:bg-transparent'}`}>{label}</button>
+  )
+
   return (
     <div className="mx-auto max-w-3xl space-y-8">
-      <h1 className="font-display text-3xl font-black text-text-1">Settings</h1>
+      <div className="space-y-4">
+        <h1 className="font-display text-3xl font-black text-text-1">Settings</h1>
+        <div className="flex gap-6 overflow-x-auto border-b border-border">
+          {tabBtn('playback', 'Playback')}
+          {tabBtn('sources', 'Sources')}
+          {tabBtn('accounts', 'Accounts')}
+          {tabBtn('library', 'Library & Data')}
+          {tabBtn('about', 'About')}
+        </div>
+      </div>
 
+      {tab === 'playback' && (<>
+      <PlaybackDefaults />
+      {/* Paid services */}
+      <section className="space-y-3">
+        <h2 className="font-display text-base font-semibold text-text-1">Streaming Services</h2>
+        <p className="text-sm text-text-3">
+          Toggle services you have accounts for. Episode links will prefer these; otherwise free sites are used.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {ALL_STREAMING_SERVICES.map(service => {
+            const active = streamingServices.includes(service)
+            return (
+              <button
+                key={service}
+                onClick={async () => {
+                  const next = active
+                    ? streamingServices.filter(s => s !== service)
+                    : [...streamingServices, service]
+                  setStreamingServices(next)
+                  await window.api?.db.setAppState('streaming_services', JSON.stringify(next))
+                }}
+                className={`rounded-card border px-3 py-2 text-sm text-left transition-colors ${
+                  active
+                    ? 'border-accent bg-accent/10 text-text-1'
+                    : 'border-border text-text-3 hover:bg-bg-1'
+                }`}
+              >{service}</button>
+            )
+          })}
+        </div>
+      </section>
+      </>)}
+
+      {tab === 'sources' && <SourcesSettings />}
+
+      {tab === 'accounts' && <AccountsSettings />}
+
+      {tab === 'library' && (<>
       {/* Export */}
       <section className="space-y-2">
         <h2 className="font-display text-base font-semibold text-text-1">Export Data</h2>
@@ -308,40 +366,6 @@ export default function Settings() {
         )}
       </section>
 
-      {/* Playback defaults */}
-      <PlaybackDefaults />
-
-      {/* Streaming Services */}
-      <section className="space-y-3">
-        <h2 className="font-display text-base font-semibold text-text-1">Streaming Services</h2>
-        <p className="text-sm text-text-3">
-          Toggle services you have accounts for. Episode links will prefer these; otherwise free sites are used.
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          {ALL_STREAMING_SERVICES.map(service => {
-            const active = streamingServices.includes(service)
-            return (
-              <button
-                key={service}
-                onClick={async () => {
-                  const next = active
-                    ? streamingServices.filter(s => s !== service)
-                    : [...streamingServices, service]
-                  setStreamingServices(next)
-                  await window.api?.db.setAppState('streaming_services', JSON.stringify(next))
-                }}
-                className={`rounded-card border px-3 py-2 text-sm text-left transition-colors ${
-                  active
-                    ? 'border-accent bg-accent/10 text-text-1'
-                    : 'border-border text-text-3 hover:bg-bg-1'
-                }`}
-              >{service}</button>
-            )
-          })}
-        </div>
-        <SourcesSettings />
-      </section>
-
       {/* Data info */}
       <section className="space-y-2">
         <h2 className="font-display text-base font-semibold text-text-1">Data Info</h2>
@@ -352,23 +376,35 @@ export default function Settings() {
         )}
       </section>
 
-      {/* About */}
+      </>)}
+
+      {tab === 'about' && (
       <section className="space-y-1">
         <h2 className="font-display text-base font-semibold text-text-1">About</h2>
         <p className="text-sm text-text-2">Senpai - Anime Tracker</p>
         <p className="text-xs text-text-3">A desktop app for tracking your anime watching habits.</p>
       </section>
+      )}
     </div>
   )
 }
 
+type SettingsTab = 'playback' | 'sources' | 'accounts' | 'library' | 'about'
+
 function PlaybackDefaults() {
   const [audio, setAudio] = useState<'sub' | 'dub'>('sub')
   const [subsOn, setSubsOn] = useState(true)
+  const [autoplay, setAutoplay] = useState(true)
+  const [autoSkip, setAutoSkip] = useState(false)
   useEffect(() => {
     window.api?.db.getAppState('audio_pref').then(v => setAudio(v === 'dub' ? 'dub' : 'sub')).catch(() => {})
     window.api?.db.getAppState('player_prefs').then(v => {
-      try { if (v && JSON.parse(v).subs?.on === false) setSubsOn(false) } catch { /* */ }
+      try {
+        const p = v ? JSON.parse(v) : {}
+        if (p.subs?.on === false) setSubsOn(false)
+        if (p.autoplay === false) setAutoplay(false)
+        if (p.autoSkip === true) setAutoSkip(true)
+      } catch { /* */ }
     }).catch(() => {})
   }, [])
   const saveSubs = async (on: boolean) => {
@@ -376,6 +412,11 @@ function PlaybackDefaults() {
     let prefs: any = {}
     try { prefs = JSON.parse((await window.api?.db.getAppState('player_prefs')) ?? '{}') } catch { /* */ }
     await window.api?.db.setAppState('player_prefs', JSON.stringify({ ...prefs, subs: { on, lang: prefs.subs?.lang ?? 'en' } }))
+  }
+  const saveFlag = async (patch: Record<string, boolean>) => {
+    let prefs: any = {}
+    try { prefs = JSON.parse((await window.api?.db.getAppState('player_prefs')) ?? '{}') } catch { /* */ }
+    await window.api?.db.setAppState('player_prefs', JSON.stringify({ ...prefs, ...patch }))
   }
   const seg = (active: boolean) => `px-4 py-1.5 text-sm font-semibold ${active ? 'bg-accent text-white' : 'bg-bg-0 text-text-3 hover:text-text-1'}`
   return (
@@ -399,6 +440,26 @@ function PlaybackDefaults() {
         <div className="flex overflow-hidden rounded-[4px] border border-border">
           <button className={seg(subsOn)} onClick={() => saveSubs(true)}>English</button>
           <button className={seg(!subsOn)} onClick={() => saveSubs(false)}>Off</button>
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm text-text-1">Autoplay next episode</p>
+          <p className="text-xs text-text-3">Counts down 10 seconds at the end of an episode, then plays the next one.</p>
+        </div>
+        <div className="flex overflow-hidden rounded-[4px] border border-border">
+          <button className={seg(autoplay)} onClick={() => { setAutoplay(true); saveFlag({ autoplay: true }) }}>On</button>
+          <button className={seg(!autoplay)} onClick={() => { setAutoplay(false); saveFlag({ autoplay: false }) }}>Off</button>
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm text-text-1">Auto-skip intro &amp; recap</p>
+          <p className="text-xs text-text-3">Skips openings and recaps automatically (when skip times are known); with autoplay on, the ending starts the next-episode countdown.</p>
+        </div>
+        <div className="flex overflow-hidden rounded-[4px] border border-border">
+          <button className={seg(autoSkip)} onClick={() => { setAutoSkip(true); saveFlag({ autoSkip: true }) }}>On</button>
+          <button className={seg(!autoSkip)} onClick={() => { setAutoSkip(false); saveFlag({ autoSkip: false }) }}>Off</button>
         </div>
       </div>
     </section>

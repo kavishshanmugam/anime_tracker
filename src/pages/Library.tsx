@@ -4,6 +4,7 @@ import { useLibrary } from '@/hooks/useLibrary'
 import { useToast } from '@/hooks/useToast'
 import { getAnimeByMalId, mapAniListToAnime } from '@/lib/anilist'
 import AnimeGrid from '@/components/AnimeGrid'
+import AnimeCard from '@/components/AnimeCard'
 import StatusBadge from '@/components/StatusBadge'
 import ProgressBar from '@/components/ProgressBar'
 import { SkeletonGrid } from '@/components/Skeleton'
@@ -12,6 +13,7 @@ import FilterSelects from '@/components/FilterSelects'
 import { useDubs } from '@/hooks/useDubs'
 import type { MyStatus, Anime } from '@/types'
 import { displayTitle } from '@/lib/title'
+import { announceCompleted } from '@/components/FinishedModal'
 
 type SortKey = 'last_updated' | 'title' | 'score' | 'progress'
 type ViewMode = 'grid' | 'list'
@@ -151,6 +153,7 @@ export default function Library() {
     })
     toast(`${displayTitle(anime)} marked completed`)
     setMenuOpen(null)
+    announceCompleted(anime.id)
   }
 
   const handleRemove = async (anime: Anime) => {
@@ -263,7 +266,7 @@ export default function Library() {
         {filtered.length === 0 ? (
           <EmptyState title="No anime found" description={search ? 'Try a different search.' : 'Your library is empty.'} />
         ) : view === 'grid' ? (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
             {filtered.map(item => (
               <div key={item.id} className="group relative">
                 {selectMode && (
@@ -273,38 +276,19 @@ export default function Library() {
                     {selected.has(item.id) && <svg width="12" height="12" viewBox="0 0 12 12" fill="white"><path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" fill="none"/></svg>}
                   </div>
                 )}
-                <button
-                  onClick={() => handleAnimeClick(item)}
-                  className="group w-full text-left transition-transform duration-200 hover:scale-[1.03]"
-                >
-                  <div
-                    className="relative aspect-[2/3] overflow-hidden rounded-card bg-bg-2"
-                    style={item.cover_accent ? { borderBottom: `3px solid ${item.cover_accent}` } : undefined}
-                  >
-                    {item.cover_url ? (
-                      <img src={item.cover_url} alt={displayTitle(item)} loading="lazy" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full items-center justify-center p-3">
-                        <span className="text-center text-sm text-text-3">{displayTitle(item)}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    <p className="text-sm font-medium text-text-1 line-clamp-2">{displayTitle(item)}</p>
-                    <StatusBadge status={item.entry.my_status} />
-                  </div>
-                </button>
+                <AnimeCard anime={item} entry={item.entry} onClick={() => handleAnimeClick(item)} />
+                <div className="mt-1"><StatusBadge status={item.entry.my_status} /></div>
                 {/* Quick complete (watched it elsewhere) */}
                 {!selectMode && item.entry.my_status !== 'completed' && item.airing_status !== 'RELEASING' && item.airing_status !== 'NOT_YET_RELEASED' && (
                   <button
                     onClick={e => { e.stopPropagation(); handleMarkCompleted(item) }}
                     title="Mark completed"
-                    className="absolute left-2 top-2 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-status-completed opacity-0 transition-opacity hover:bg-status-completed hover:text-black group-hover:opacity-100"
+                    className="absolute left-2 top-2 z-10 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-status-completed opacity-0 transition-opacity hover:bg-status-completed hover:text-black group-hover:opacity-100"
                   >✓ Completed</button>
                 )}
                 {/* Quick menu */}
                 {!selectMode && (
-                  <div className="absolute top-2 right-2">
+                  <div className="absolute top-2 right-2 z-10">
                     <button
                       onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === item.id ? null : item.id) }}
                       className="rounded bg-black/50 px-1.5 py-0.5 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"

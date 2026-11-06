@@ -15,6 +15,7 @@ import { latestAired, type ScheduleRow } from '@/lib/upnext'
 import WatchOrder from '@/components/WatchOrder'
 import { watchPath, stripHtml } from '@/lib/watch'
 import { displayTitle } from '@/lib/title'
+import { announceCompleted } from '@/components/FinishedModal'
 
 const STREAMING_SITES = ['Crunchyroll', 'Funimation', 'Netflix', 'Hulu', 'Amazon', 'Disney Plus', 'HIDIVE', 'VRV', 'Bilibili', 'iQIYI', 'Wakanim', 'AnimeLab']
 const STATUSES: { value: MyStatus; label: string }[] = [
@@ -194,6 +195,7 @@ export default function AnimeDetail() {
       await window.api.db.addWatchEvent({ anime_id: anime.id, episode: target, source: 'manual', watched_at: new Date().toISOString() })
     refresh()
     toast(finished ? 'Completed!' : target === 0 ? 'Marked all episodes unwatched' : `Watched up to E${target}`)
+    if (finished && entry?.my_status !== 'completed') announceCompleted(anime.id)
   }
 
   const handleMarkCompleted = async () => {
@@ -203,6 +205,7 @@ export default function AnimeDetail() {
       finished_at: new Date().toISOString().split('T')[0],
     })
     toast('Marked completed')
+    announceCompleted(anime.id)
   }
 
   const handleDrop = async () => {

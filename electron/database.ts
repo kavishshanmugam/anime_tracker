@@ -169,6 +169,16 @@ const ANIME_COLS = [
 ] as const
 
 // ponytail: direct accessors for use by other main-process modules (stream-resolver)
+// Library-entry change listeners (AniList / MAL sync).
+const entryListeners = new Set<(animeId: number) => void>()
+export function onEntryChanged(fn: (animeId: number) => void) { entryListeners.add(fn) }
+function notifyEntryChanged(animeId: number) { for (const fn of entryListeners) { try { fn(animeId) } catch { /* */ } } }
+
+/** Read helpers for main-process modules. */
+export function getAnimeRow(id: number): any | null { return query('SELECT * FROM anime WHERE id = ?', [id])[0] ?? null }
+export function getEntryRow(animeId: number): any | null { return query('SELECT * FROM library_entry WHERE anime_id = ?', [animeId])[0] ?? null }
+export function getAllEntryAnimeIds(): number[] { return query('SELECT anime_id FROM library_entry').map((r: any) => r.anime_id) }
+
 export function getAppState(key: string): string | null {
   const rows = query('SELECT value FROM app_state WHERE key = ?', [key])
   return rows[0]?.value ?? null
@@ -272,21 +282,23 @@ export function registerAllHandlers(ipcMain: IpcMain): void {
   })
 
   ipcMain.handle('db:upsertLibraryEntry', (_e, data: any) => {
+    // Existing entry: update ONLY the fields provided (partial updates must never reset
+    // status/progress/rewatch count to defaults). New entry: insert with defaults.
+    const ENTRY_COLS = ['my_status', 'my_score', 'progress', 'rewatch_count', 'started_at', 'finished_at',
+      'last_watched_at', 'notes', 'custom_tags', 'source'] as const
+    const existing = query('SELECT id FROM library_entry WHERE anime_id = ?', [data.anime_id])
+    if (existing.length) {
+      const cols = ENTRY_COLS.filter(c => data[c] !== undefined)
+      if (cols.length) {
+        run(`UPDATE library_entry SET ${cols.map(c => `${c} = ?`).join(', ')}, updated_at = datetime('now') WHERE anime_id = ?`,
+          [...cols.map(c => data[c]), data.anime_id])
+      }
+      notifyEntryChanged(data.anime_id)
+      return existing[0].id
+    }
     const { lastId } = run(`
       INSERT INTO library_entry (anime_id, my_status, my_score, progress, rewatch_count, started_at, finished_at, last_watched_at, notes, custom_tags, source, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(anime_id) DO UPDATE SET
-        my_status = COALESCE(excluded.my_status, my_status),
-        my_score = COALESCE(excluded.my_score, my_score),
-        progress = COALESCE(excluded.progress, progress),
-        rewatch_count = COALESCE(excluded.rewatch_count, rewatch_count),
-        started_at = COALESCE(excluded.started_at, started_at),
-        finished_at = COALESCE(excluded.finished_at, finished_at),
-        last_watched_at = COALESCE(excluded.last_watched_at, last_watched_at),
-        notes = COALESCE(excluded.notes, notes),
-        custom_tags = COALESCE(excluded.custom_tags, custom_tags),
-        source = COALESCE(excluded.source, source),
-        updated_at = datetime('now')
     `, [
       data.anime_id,
       data.my_status ?? 'plan_to_watch',
@@ -300,6 +312,7 @@ export function registerAllHandlers(ipcMain: IpcMain): void {
       data.custom_tags ?? null,
       data.source ?? 'manual',
     ])
+    notifyEntryChanged(data.anime_id)
     return lastId
   })
 

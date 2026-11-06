@@ -7,14 +7,17 @@ import EpisodeCard from '@/components/EpisodeCard'
 import { airedFromMeta, getEpisodeMeta, type EpisodeMeta } from '@/lib/episodes'
 import { stripHtml } from '@/lib/watch'
 import { progressAfterWatching } from '@/lib/progress'
+import { clearResume, fmtTime, getResume, loadResume, setResume } from '@/lib/resume'
 import { displayTitle } from '@/lib/title'
+import { announceCompleted } from '@/components/FinishedModal'
 
 const MAX_AUTO_SWITCHES = 3
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 type QualityPref = 'max' | 'auto'
 type Audio = 'sub' | 'dub'
-interface PlayerPrefs { rate: number; quality: QualityPref; subs: { on: boolean; lang: string } }
-const DEFAULT_PREFS: PlayerPrefs = { rate: 1, quality: 'max', subs: { on: true, lang: 'en' } }
+interface PlayerPrefs { rate: number; quality: QualityPref; subs: { on: boolean; lang: string }; autoplay: boolean; autoSkip: boolean }
+const DEFAULT_PREFS: PlayerPrefs = { rate: 1, quality: 'max', subs: { on: true, lang: 'en' }, autoplay: true, autoSkip: false }
+const COUNTDOWN = 10
 // Page states that mean "this domain is broken" (as opposed to a Cloudflare challenge the user can solve).
 const DEAD_PAGE = /\b(404|not found|page not found|domain.*for sale|buy this domain|account suspended|coming soon|bad gateway|service unavailable|error 52\d|web server is down)\b/i
 const CHALLENGE = /just a moment|checking your browser|attention required|verify you are human|ddos-guard/i
@@ -41,6 +44,14 @@ export default function Watch() {
   const [activeSkip, setActiveSkip] = useState<SkipTime | null>(null)
   const [watchMarked, setWatchMarked] = useState(false)
   const [nearEnd, setNearEnd] = useState(false)
+  // Resume + autoplay
+  const [countdown, setCountdown] = useState<number | null>(null)
+  const [resumedFrom, setResumedFrom] = useState<number | null>(null)
+  const resumeDoneRef = useRef(false)
+  const lastSaveRef = useRef(0)
+  const skippedRef = useRef<Set<string>>(new Set())
+  const countdownCancelledRef = useRef(false)
+  useEffect(() => { loadResume().catch(() => {}) }, [])
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [onEpisodePage, setOnEpisodePage] = useState(false)
   const [sourceMenu, setSourceMenu] = useState(false)
@@ -173,6 +184,11 @@ export default function Watch() {
     setActiveSkip(null)
     setSkips([])
     setNotice(null)
+    setCountdown(null)
+    setResumedFrom(null)
+    resumeDoneRef.current = false
+    skippedRef.current = new Set()
+    countdownCancelledRef.current = false
     resolve()
     if (malId) window.api?.stream.getSkipTimes(malId, epNum).then(s => { if (s?.length) setSkips(s) }).catch(() => {})
   }, [title, epNum, malId, resolve, audio])
@@ -218,7 +234,7 @@ export default function Watch() {
       const total = totalEps ?? (await window.api?.db.getAnime(Number(id)))?.episodes_total
       const update = progressAfterWatching({ entry, episode: epNum, episodesTotal: total })
       if (update) await window.api?.db.upsertLibraryEntry({ anime_id: Number(id), ...(entry ? {} : { source: 'in-app' }), ...update })
-      if (update?.my_status === 'completed') setNotice('Series completed 🎉 — marked as Completed in your lists')
+      if (update?.my_status === 'completed') { setNotice('Series completed 🎉 — marked as Completed in your lists'); announceCompleted(Number(id)) }
     } catch { /* non-fatal */ }
   }, [id, epNum, totalEps])
 
@@ -229,24 +245,73 @@ export default function Watch() {
       const id = wcId()
       if (id == null) return
       const info = await window.api.stream.player(id, {
-        type: 'state', prefs: { rate: prefsRef.current.rate, mode: prefsRef.current.quality, subs: prefsRef.current.subs, audio: audioRef.current },
+        type: 'state', prefs: {
+          rate: prefsRef.current.rate, mode: prefsRef.current.quality, subs: prefsRef.current.subs, audio: audioRef.current,
+          flags: { autoplay: prefsRef.current.autoplay, autoSkip: prefsRef.current.autoSkip },
+        },
       }).catch(() => null)
       setPlayer(info)
-      for (const req of info?.requests ?? []) if (req.type === 'audio') changeAudio(req.value)
+      for (const req of info?.requests ?? []) {
+        if (req.type === 'audio') changeAudio(req.value)
+        else if (req.type === 'autoplay') savePrefs({ ...prefsRef.current, autoplay: req.value })
+        else if (req.type === 'autoskip') savePrefs({ ...prefsRef.current, autoSkip: req.value })
+      }
       if (!info || !info.duration) return
+      const animeId = Number(id)
+
+      // Resume where you left off (once per episode).
+      if (!resumeDoneRef.current) {
+        resumeDoneRef.current = true
+        const pos = getResume(animeId, epNum)
+        if (pos && pos.t > 30 && pos.t < info.duration - 60 && info.time < 15) {
+          window.api.stream.player(id, { type: 'seek', time: pos.t }).catch(() => {})
+          setResumedFrom(pos.t)
+        }
+      }
+      // Save position every ~5 s of playback.
+      if (!info.paused && Math.abs(info.time - lastSaveRef.current) >= 5) {
+        lastSaveRef.current = info.time
+        setResume(animeId, epNum, info.time, info.duration)
+      }
+
+      // Auto-skip intro / recap (outro is handled by autoplay below).
+      const seg = skips.find(sk => info.time >= sk.startTime && info.time < sk.endTime)
+      if (seg && prefsRef.current.autoSkip && seg.type !== 'ed' && seg.type !== 'mixed-ed') {
+        const key = `${seg.type}:${seg.startTime}`
+        if (!skippedRef.current.has(key)) {
+          skippedRef.current.add(key)
+          window.api.stream.player(id, { type: 'seek', time: seg.endTime }).catch(() => {})
+          setNotice(seg.type === 'recap' ? 'Skipped recap' : 'Skipped intro')
+        }
+      }
+      // Autoplay: start the next-episode countdown at the end (or when the outro starts, if auto-skip is on).
+      const hasNextEp = !totalEps || epNum < totalEps
+      const outro = seg && (seg.type === 'ed' || seg.type === 'mixed-ed') && prefsRef.current.autoSkip
+      const ended = info.duration - info.time < 2
+      if (prefsRef.current.autoplay && hasNextEp && !countdownCancelledRef.current && (ended || outro))
+        setCountdown(c => c ?? COUNTDOWN)
       // Speed/quality picked in the in-player ⚙ menu → remember for next episodes.
       const pr = prefsRef.current
       const mode: QualityPref | null = info.mode === 'max' || info.mode === 'auto' ? info.mode : null
       const subsChanged = info.subs.tracks.length > 0 && (info.subs.on !== pr.subs.on || info.subs.lang !== pr.subs.lang)
       if (Math.abs(info.rate - pr.rate) > 0.01 || (mode && mode !== pr.quality) || subsChanged)
-        savePrefs({ rate: info.rate, quality: mode ?? pr.quality, subs: subsChanged ? { on: info.subs.on, lang: info.subs.lang } : pr.subs })
+        savePrefs({ ...pr, rate: info.rate, quality: mode ?? pr.quality, subs: subsChanged ? { on: info.subs.on, lang: info.subs.lang } : pr.subs })
       if (info.events.length) setNotice(info.events[info.events.length - 1])
       setActiveSkip(skips.find(sk => info.time >= sk.startTime && info.time < sk.endTime) ?? null)
       if (info.time / info.duration > 0.85) markWatched()
+      if (info.time / info.duration > 0.92) clearResume(animeId, epNum)
       setNearEnd(info.duration - info.time < 30)
     }, 1500)
     return () => clearInterval(timer)
-  }, [skips, onEpisodePage, markWatched, savePrefs, changeAudio])
+  }, [skips, onEpisodePage, markWatched, savePrefs, changeAudio, id, epNum, totalEps])
+
+  // Next-episode countdown.
+  useEffect(() => {
+    if (countdown == null) return
+    if (countdown <= 0) { setCountdown(null); navigateEp(epNum + 1); return }
+    const t = setTimeout(() => setCountdown(c => (c == null ? null : c - 1)), 1000)
+    return () => clearTimeout(t)
+  }, [countdown]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSkip = useCallback(() => {
     const id = wcId()
@@ -424,7 +489,7 @@ export default function Watch() {
                     )}
                     <div className="flex justify-center gap-2 pt-1">
                       <button onClick={() => setLinkOpen(true)} className="rounded-[4px] bg-accent px-4 py-2 text-sm font-bold text-white hover:bg-accent-hover">Paste a link</button>
-                      <button onClick={() => navigate('/settings')} className={toolBtn}>Sources</button>
+                      <button onClick={() => navigate('/settings?tab=sources')} className={toolBtn}>Sources</button>
                       <button onClick={openInBrowser} className={toolBtn}>Search in browser</button>
                     </div>
                   </div>
@@ -437,7 +502,32 @@ export default function Watch() {
                   {skipLabel} ›
                 </button>
               )}
-              {nearEnd && !activeSkip && hasNext && (
+              {countdown != null && hasNext && (
+                <div className="absolute bottom-16 right-6 z-40 w-80 rounded-card border border-border bg-bg-1/95 p-4 shadow-2xl backdrop-blur">
+                  <p className="text-xs font-bold uppercase tracking-wide text-text-3">Next episode in {countdown}s</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-text-1">
+                    E{epNum + 1}{epMeta.get(epNum + 1)?.title ? ` - ${epMeta.get(epNum + 1)!.title}` : ''}
+                  </p>
+                  <div className="mt-2 h-1 overflow-hidden rounded-full bg-bg-2">
+                    <div className="h-full bg-accent transition-all duration-1000 ease-linear" style={{ width: `${((COUNTDOWN - countdown) / COUNTDOWN) * 100}%` }} />
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <button onClick={() => { setCountdown(null); navigateEp(epNum + 1) }}
+                      className="flex-1 rounded-[4px] bg-accent px-3 py-2 text-sm font-bold uppercase text-white hover:bg-accent-hover">▶ Play now</button>
+                    <button onClick={() => { countdownCancelledRef.current = true; setCountdown(null) }}
+                      className="rounded-[4px] border border-border px-3 py-2 text-sm font-semibold text-text-2 hover:bg-bg-2">Cancel</button>
+                  </div>
+                </div>
+              )}
+              {resumedFrom != null && (
+                <div className="absolute left-4 top-4 z-30 flex items-center gap-2 rounded-[4px] bg-black/75 px-3 py-2 text-sm text-white backdrop-blur">
+                  Resumed from {fmtTime(resumedFrom)}
+                  <button onClick={() => { const wid = wcId(); if (wid != null) window.api.stream.player(wid, { type: 'seek', time: 0 }).catch(() => {}); setResumedFrom(null) }}
+                    className="rounded bg-white/15 px-2 py-0.5 text-xs font-semibold hover:bg-accent">Start over</button>
+                  <button onClick={() => setResumedFrom(null)} className="px-1 text-white/60 hover:text-white">✕</button>
+                </div>
+              )}
+              {nearEnd && !activeSkip && hasNext && countdown == null && (
                 <button onClick={() => navigateEp(epNum + 1)}
                   className="absolute bottom-16 right-6 z-30 rounded-[4px] bg-accent px-5 py-2.5 text-sm font-bold uppercase tracking-wide text-white shadow-lg hover:bg-accent-hover">
                   Next episode ›
