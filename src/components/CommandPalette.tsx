@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSearch } from '@/hooks/useSearch'
+import { displayTitle } from '@/lib/title'
 
 interface CommandPaletteProps {
   open: boolean
@@ -103,7 +104,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     <div className="h-10 w-7 shrink-0 rounded bg-bg-2" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-text-1">{anime.title}</p>
+                    <p className="truncate font-medium text-text-1">{displayTitle(anime)}</p>
                     <p className="text-xs text-text-3">
                       {[anime.format, anime.season_year].filter(Boolean).join(' · ')}
                     </p>

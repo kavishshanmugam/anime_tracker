@@ -1,8 +1,9 @@
 import { getAnimeById, mapAniListToAnime, getAnimeByMalId } from './anilist'
 import type { Anime } from '@/types'
+import { displayTitle } from '@/lib/title'
 
 export interface SyncNotification {
-  type: 'new_episode' | 'sequel'
+  type: 'new_episode' | 'sequel' | 'dub'
   title: string
   body: string
   animeId?: number
@@ -15,9 +16,15 @@ export async function syncAiringSchedules(
   if (!window.api) return { synced: 0, notifications: [] }
 
   const library = await window.api.db.getLibrary()
-  const airing = library.filter(
-    e => e.airing_status === 'RELEASING' || (e.entry.my_status === 'watching' && e.anilist_id)
-  )
+  // Airing / upcoming shows, anything you're watching, and watchlist shows that haven't finished airing.
+  const airing = library.filter(e =>
+    e.airing_status === 'RELEASING' || e.airing_status === 'NOT_YET_RELEASED' ||
+    (e.entry.my_status === 'watching' && e.anilist_id) ||
+    (e.entry.my_status === 'plan_to_watch' && e.airing_status !== 'FINISHED' && e.anilist_id))
+
+  // Watchlist alerts (first episode out / season finished) are sent once per show.
+  let ptwSent: Record<string, string[]> = {}
+  try { ptwSent = JSON.parse((await window.api.db.getAppState('ptw_alerts')) ?? '{}') } catch { /* */ }
 
   let synced = 0
   const notifications: SyncNotification[] = []
@@ -28,6 +35,29 @@ export async function syncAiringSchedules(
     if (!anime.anilist_id) continue
     try {
       const media = await getAnimeById(anime.anilist_id)
+      // Watchlist (not started) alerts: first episode aired, and the whole season finished airing.
+      const notStarted = anime.entry.my_status === 'plan_to_watch' && (anime.entry.progress ?? 0) === 0
+      if (notStarted) {
+        const sent = new Set(ptwSent[anime.id] ?? [])
+        const firstOut = media.status === 'FINISHED' || (media.status === 'RELEASING' && (media.nextAiringEpisode?.episode ?? 2) > 1)
+        if (firstOut && !sent.has('first') && anime.airing_status === 'NOT_YET_RELEASED') {
+          notifications.push({ type: 'new_episode', title: 'First episode is out', body: `${displayTitle(anime)} has started airing — episode 1 is available`, animeId: anime.id })
+          sent.add('first')
+        }
+        if (media.status === 'FINISHED' && !sent.has('finished') && anime.airing_status && anime.airing_status !== 'FINISHED') {
+          notifications.push({ type: 'new_episode', title: 'Season finished airing', body: `${displayTitle(anime)}: all ${media.episodes ?? ''} episodes are out — ready to binge`.replace('all  episodes', 'every episode'), animeId: anime.id })
+          sent.add('finished')
+        }
+        ptwSent[anime.id] = [...sent]
+      }
+
+      // Keep airing status / episode count fresh so "Up Next" knows when a show finished airing.
+      if (media.status !== anime.airing_status || (media.episodes && media.episodes !== anime.episodes_total)) {
+        await window.api.db.upsertAnime({
+          mal_id: anime.mal_id, anilist_id: anime.anilist_id,
+          airing_status: media.status, episodes_total: media.episodes ?? anime.episodes_total,
+        } as any)
+      }
       if (media.airingSchedule?.nodes?.length) {
         for (const node of media.airingSchedule.nodes) {
           const airingAt = new Date(node.airingAt * 1000)
@@ -44,7 +74,7 @@ export async function syncAiringSchedules(
             notifications.push({
               type: 'new_episode',
               title: 'New Episode',
-              body: `${anime.title} Episode ${node.episode} airs today`,
+              body: `${displayTitle(anime)} Episode ${node.episode} airs today`,
               animeId: anime.id,
             })
           }
@@ -64,7 +94,7 @@ export async function syncAiringSchedules(
           notifications.push({
             type: 'new_episode',
             title: 'New Episode',
-            body: `${anime.title} Episode ${media.nextAiringEpisode.episode} airs today`,
+            body: `${displayTitle(anime)} Episode ${media.nextAiringEpisode.episode} airs today`,
             animeId: anime.id,
           })
         }
@@ -75,6 +105,8 @@ export async function syncAiringSchedules(
     }
     onProgress?.(synced, airing.length)
   }
+  window.api.db.setAppState('ptw_alerts', JSON.stringify(ptwSent)).catch(() => {})
+  window.dispatchEvent(new CustomEvent('senpai:synced'))
   return { synced, notifications }
 }
 
@@ -131,7 +163,7 @@ export async function detectFranchiseEntries(anime: Anime): Promise<{ added: num
     notifications.push({
       type: 'sequel',
       title: 'Sequel Available',
-      body: `${relAnime.title} (${rel.type.replace(/_/g, ' ').toLowerCase()}) of ${anime.title}`,
+      body: `${relAnime.title} (${rel.type.replace(/_/g, ' ').toLowerCase()}) of ${displayTitle(anime)}`,
       animeId: relAnime.id,
     })
   }

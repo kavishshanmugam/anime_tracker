@@ -6,6 +6,16 @@ import ProgressBar from '@/components/ProgressBar'
 import StatusBadge from '@/components/StatusBadge'
 import { SkeletonText } from '@/components/Skeleton'
 import type { MyStatus } from '@/types'
+import EpisodeCard from '@/components/EpisodeCard'
+import AudioToggle, { useShowAudio } from '@/components/AudioToggle'
+import { useDubs } from '@/hooks/useDubs'
+import { DUB_LABEL } from '@/lib/dubs'
+import { airedFromMeta, getEpisodeMeta, type EpisodeMeta } from '@/lib/episodes'
+import { latestAired, type ScheduleRow } from '@/lib/upnext'
+import WatchOrder from '@/components/WatchOrder'
+import { watchPath, stripHtml } from '@/lib/watch'
+import { displayTitle } from '@/lib/title'
+import { announceCompleted } from '@/components/FinishedModal'
 
 const STREAMING_SITES = ['Crunchyroll', 'Funimation', 'Netflix', 'Hulu', 'Amazon', 'Disney Plus', 'HIDIVE', 'VRV', 'Bilibili', 'iQIYI', 'Wakanim', 'AnimeLab']
 const STATUSES: { value: MyStatus; label: string }[] = [
@@ -15,6 +25,8 @@ const STATUSES: { value: MyStatus; label: string }[] = [
   { value: 'on_hold', label: 'On Hold' },
   { value: 'dropped', label: 'Dropped' },
 ]
+
+const EP_PAGE = 100
 
 interface Relation {
   type: string
@@ -37,7 +49,12 @@ export default function AnimeDetail() {
   const { anime, entry, events, loading, updateEntry, deleteEntry, refresh } = useAnimeDetail(Number(id))
   const { toast } = useToast()
   const [synopsisExpanded, setSynopsisExpanded] = useState(false)
-  const [epCollapsed, setEpCollapsed] = useState(true)
+  const [epPage, setEpPage] = useState(0)
+  const [tab, setTab] = useState<'episodes' | 'order' | 'tracking' | 'more'>('episodes')
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const [schedule, setSchedule] = useState<ScheduleRow[]>([])
+  const [dubCount, setDubCount] = useState<number | null>(null)
+  const [epMeta, setEpMeta] = useState<Map<number, EpisodeMeta>>(new Map())
   const [configuredServices, setConfiguredServices] = useState<string[]>([])
   const [localNotes, setLocalNotes] = useState(entry?.notes ?? '')
   const [localProgress, setLocalProgress] = useState(entry?.progress ?? 0)
@@ -69,9 +86,38 @@ export default function AnimeDetail() {
   // ponytail: prefetch slug on mount, cancel on unmount/navigate away
   useEffect(() => {
     if (!anime?.title) return
-    window.api?.stream.prefetch(anime.title).catch(() => {})
+    window.api?.stream.prefetch(anime.title, anime.title_en ?? undefined).catch(() => {})
     return () => { window.api?.stream.cancelPrefetch(anime.title).catch(() => {}) }
   }, [anime?.title])
+
+  useEffect(() => {
+    setEpMeta(new Map())
+    if (anime?.anilist_id) getEpisodeMeta(anime.anilist_id).then(setEpMeta).catch(() => {})
+  }, [anime?.anilist_id])
+
+  const [audio, setAudio] = useShowAudio(anime?.id)
+  const dubOf = useDubs()
+
+  // Airing schedule rows for this show (to hide episodes that haven't aired yet).
+  useEffect(() => {
+    if (!anime?.id || !window.api) return
+    const from = new Date(Date.now() - 400 * 86_400_000).toISOString()
+    const to = new Date(Date.now() + 120 * 86_400_000).toISOString()
+    window.api.db.getAiringSchedule(from, to)
+      .then(rows => setSchedule((rows as ScheduleRow[]).filter(r => r.anime_id === anime.id)))
+      .catch(() => {})
+  }, [anime?.id])
+
+  // In dub mode, ask the source how many episodes are dubbed so far (null = unknown).
+  useEffect(() => {
+    setDubCount(null)
+    if (!anime || audio !== 'dub' || !window.api) return
+    window.api.stream.episodeCount(anime.title, 'dub', { titleEn: anime.title_en ?? undefined, anilistId: anime.anilist_id ?? undefined })
+      .then(setDubCount).catch(() => {})
+  }, [anime?.id, audio]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Start on the page of episodes containing the next one to watch.
+  useEffect(() => { setEpPage(Math.floor((entry?.progress ?? 0) / EP_PAGE)) }, [anime?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -133,6 +179,25 @@ export default function AnimeDetail() {
     } catch { toast('Failed to update') }
   }
 
+  /** Watched it elsewhere: set progress to exactly `ep` (marks earlier episodes too). */
+  const setWatchedUpTo = async (ep: number) => {
+    if (!anime) return
+    const target = Math.max(0, ep)
+    const day = new Date().toISOString().split('T')[0]
+    const finished = !!anime.episodes_total && target >= anime.episodes_total
+    const updates: any = { progress: target, last_watched_at: new Date().toISOString() }
+    if (!entry?.started_at && target > 0) updates.started_at = day
+    if (finished) { updates.my_status = 'completed'; updates.finished_at = day }
+    else if (target > 0 && (!entry || entry.my_status === 'plan_to_watch' || entry.my_status === 'completed')) updates.my_status = 'watching'
+    else if (target === 0 && !entry) updates.my_status = 'plan_to_watch'
+    await updateEntry(updates)
+    if (target > (entry?.progress ?? 0) && window.api)
+      await window.api.db.addWatchEvent({ anime_id: anime.id, episode: target, source: 'manual', watched_at: new Date().toISOString() })
+    refresh()
+    toast(finished ? 'Completed!' : target === 0 ? 'Marked all episodes unwatched' : `Watched up to E${target}`)
+    if (finished && entry?.my_status !== 'completed') announceCompleted(anime.id)
+  }
+
   const handleMarkCompleted = async () => {
     await updateEntry({
       my_status: 'completed' as MyStatus,
@@ -140,6 +205,7 @@ export default function AnimeDetail() {
       finished_at: new Date().toISOString().split('T')[0],
     })
     toast('Marked completed')
+    announceCompleted(anime.id)
   }
 
   const handleDrop = async () => {
@@ -176,70 +242,245 @@ export default function AnimeDetail() {
     ['Score', anime.mean_score ? `${anime.mean_score}%` : null],
   ].filter(([, v]) => v != null) as [string, string | number][]
 
-  return (
-    <div className="pb-12">
-      {/* Banner */}
-      <div
-        className="relative h-36 md:h-48"
-        style={{
-          background: anime.banner_url
-            ? `url(${anime.banner_url}) center/cover`
-            : anime.cover_accent ?? 'var(--color-bg-2, #1a1a2e)',
-        }}
-      >
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-bg-0" />
-        <button
-          onClick={() => navigate(-1)}
-          className="absolute top-3 left-3 z-20 rounded-card bg-black/50 px-2.5 py-1 text-sm text-white hover:bg-black/70 backdrop-blur-sm"
-        >&larr; Back</button>
-      </div>
+  const total = anime.episodes_total ?? 0
+  const progress = entry?.progress ?? 0
+  const watchedEps = new Set(events.map(ev => ev.episode))
+  const nextEp = anime.episodes_total ? Math.min(progress + 1, anime.episodes_total) : progress + 1
+  const paidLink = configuredServices.length > 0
+    ? streamingLinks.find(l => configuredServices.some(sv => l.site.toLowerCase().includes(sv.toLowerCase())))
+    : undefined
+  // Paid service you subscribe to → open it in your browser; otherwise the in-app player.
+  const playEp = (ep: number) => {
+    if (paidLink) { window.open(paidLink.url, '_blank'); return }
+    navigate(watchPath(anime, ep))
+  }
+  let genres: string[] = []
+  try { genres = anime.genres ? (JSON.parse(anime.genres) as string[]) : [] } catch { genres = (anime.genres ?? '').split(',').map(g => g.trim()).filter(Boolean) }
+  const primaryLabel = !entry || progress === 0 ? 'Start watching E1'
+    : entry.my_status === 'completed' ? 'Watch again E1' : `Continue E${nextEp}`
+  // Only list episodes that are actually out (and, for the dub, that are dubbed).
+  const metaAired = airedFromMeta(epMeta)
+  const scheduleAired = latestAired({ ...anime, entry: entry ?? undefined } as any, schedule, Date.now())
+  const aired = anime.airing_status === 'NOT_YET_RELEASED' ? 0
+    : anime.airing_status === 'RELEASING' ? Math.min(metaAired ?? Infinity, Number.isFinite(scheduleAired) ? scheduleAired : Infinity)
+    : (total || metaAired || 0)
+  const airedCount = Number.isFinite(aired) ? aired : (metaAired ?? total)
+  const listed = audio === 'dub' && dubCount != null ? Math.min(airedCount, dubCount) : airedCount
+  const nextAiring = [...epMeta.values()].filter(e => e.airAt && e.airAt > Date.now()).sort((a, b) => a.number - b.number)[0]
+    ?? (() => { const r = schedule.filter(x => Date.parse(x.airing_at) > Date.now()).sort((a, b) => a.episode - b.episode)[0]; return r ? { number: r.episode, airAt: Date.parse(r.airing_at) } : undefined })()
+  const pages = Math.ceil(listed / EP_PAGE)
+  const epFrom = epPage * EP_PAGE + 1
+  const epTo = Math.min(listed, epFrom + EP_PAGE - 1)
 
-      {/* Main info */}
-      <div className="relative px-6 -mt-20 flex gap-6">
-        {/* Cover */}
-        <div className="shrink-0 w-36 md:w-44">
-          <div className="aspect-[2/3] overflow-hidden rounded-card bg-bg-2 shadow-lg">
-            {anime.cover_url ? (
-              <img src={anime.cover_url} alt={anime.title} className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full items-center justify-center p-3 text-sm text-text-3">{anime.title}</div>
-            )}
-          </div>
+  const tabBtn = (id: typeof tab, label: string) => (
+    <button onClick={() => setTab(id)}
+      className={`relative px-1 py-3 text-sm font-bold uppercase tracking-wide transition-colors ${tab === id ? 'text-text-1' : 'text-text-3 hover:text-text-1'}
+        after:absolute after:inset-x-0 after:bottom-0 after:h-[3px] after:rounded-full ${tab === id ? 'after:bg-accent' : 'after:bg-transparent'}`}>
+      {label}
+    </button>
+  )
+
+  return (
+    <div className="pb-16">
+      {/* Hero */}
+      <div className="relative min-h-[520px] w-full">
+        {/* Art is clipped on its own layer so menus in the hero can overflow it. */}
+        <div className="absolute inset-0 overflow-hidden">
+          {anime.banner_url ? (
+            <img src={anime.banner_url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          ) : anime.cover_url ? (
+            <img src={anime.cover_url} alt="" className="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-2xl" />
+          ) : null}
+          <div className="absolute inset-0 bg-gradient-to-r from-bg-0 via-bg-0/85 to-bg-0/30" />
+          <div className="absolute inset-0 bg-gradient-to-t from-bg-0 via-transparent to-bg-0/50" />
         </div>
 
-        {/* Info */}
-        <div className="flex-1 pt-20 space-y-3">
-          <h1 className="font-display text-2xl font-bold text-text-1">{anime.title}</h1>
-          {anime.title_jp && <p className="text-sm text-text-3">{anime.title_jp}</p>}
-
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
-            {infoPairs.map(([label, value]) => (
-              <span key={label} className="text-sm">
-                <span className="text-text-3">{label}:</span>{' '}
-                <span className="text-text-2">{value}</span>
-              </span>
-            ))}
+        <button onClick={() => (window.history.state?.idx ?? 0) > 0 ? navigate(-1) : navigate('/')}
+          className="absolute left-4 top-[72px] z-20 flex items-center gap-1.5 rounded-full bg-black/50 px-3 py-1.5 text-sm font-semibold text-white backdrop-blur hover:bg-black/70 lg:left-10"
+          title="Back (Esc)">
+          ← Back
+        </button>
+        <div className="relative flex gap-8 px-4 pb-10 pt-[116px] lg:px-10">
+          <div className="hidden w-56 shrink-0 md:block">
+            <div className="aspect-[2/3] overflow-hidden rounded-[6px] bg-bg-2 shadow-2xl ring-1 ring-white/10">
+              {anime.cover_url
+                ? <img src={anime.cover_url} alt={displayTitle(anime)} className="h-full w-full object-cover" />
+                : <div className="flex h-full items-center justify-center p-3 text-sm text-text-3">{displayTitle(anime)}</div>}
+            </div>
           </div>
 
-          {/* Synopsis */}
-          {synopsis && (
-            <div>
-              <p
-                className={`text-sm text-text-2 leading-relaxed ${!synopsisExpanded && isLongSynopsis ? 'line-clamp-4' : ''}`}
-                dangerouslySetInnerHTML={{ __html: synopsis.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/on\w+\s*=/gi, '') }}
-              />
-              {isLongSynopsis && (
-                <button
-                  onClick={() => setSynopsisExpanded(!synopsisExpanded)}
-                  className="mt-1 text-xs text-accent hover:text-accent-hover"
-                >{synopsisExpanded ? 'Show less' : 'Show more'}</button>
+          <div className="max-w-3xl flex-1 space-y-4">
+            <h1 className="font-display text-4xl font-black leading-tight text-white drop-shadow-lg lg:text-5xl">{displayTitle(anime)}</h1>
+            {(displayTitle(anime) !== anime.title || anime.title_jp) && (
+              <p className="text-sm text-text-3">{[displayTitle(anime) !== anime.title ? anime.title : null, anime.title_jp].filter(Boolean).join(' · ')}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-2">
+              {anime.mean_score && <span className="font-semibold text-text-1">★ {anime.mean_score}%</span>}
+              {infoPairs.filter(([l]) => l !== 'Score').map(([label, value]) => (
+                <span key={label}><span className="text-text-3">{label}</span> {value}</span>
+              ))}
+              {anime.airing_status && <span><span className="text-text-3">Status</span> {anime.airing_status === 'RELEASING' ? 'Airing' : anime.airing_status === 'FINISHED' ? 'Finished' : anime.airing_status === 'NOT_YET_RELEASED' ? 'Upcoming' : anime.airing_status}</span>}
+              {dubOf(anime.mal_id, anime.airing_status) !== 'unknown' && (
+                <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${dubOf(anime.mal_id, anime.airing_status) === 'complete' ? 'bg-status-completed/20 text-status-completed' : dubOf(anime.mal_id, anime.airing_status) === 'ongoing' ? 'bg-status-onhold/20 text-status-onhold' : 'bg-white/10 text-text-2'}`}>
+                  {DUB_LABEL[dubOf(anime.mal_id, anime.airing_status)]}
+                </span>
+              )}
+              {entry && <StatusBadge status={entry.my_status} />}
+            </div>
+            {genres.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {genres.slice(0, 6).map(g => <span key={g} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-text-2">{g}</span>)}
+              </div>
+            )}
+            {synopsis && (
+              <div>
+                <p className={`text-sm leading-relaxed text-text-2 ${!synopsisExpanded && isLongSynopsis ? 'line-clamp-4' : ''}`}>
+                  {stripHtml(synopsis)}
+                </p>
+                {isLongSynopsis && (
+                  <button onClick={() => setSynopsisExpanded(!synopsisExpanded)} className="mt-1 text-xs font-semibold uppercase text-accent hover:text-accent-hover">
+                    {synopsisExpanded ? 'Less details' : 'More details'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <button onClick={() => playEp(entry?.my_status === 'completed' ? 1 : nextEp)}
+                className="flex items-center gap-2 rounded-[4px] bg-accent px-6 py-3 text-sm font-bold uppercase tracking-wide text-white hover:bg-accent-hover">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z" /></svg>
+                {primaryLabel}{paidLink ? ` on ${paidLink.site}` : ''}
+              </button>
+              <button
+                onClick={() => entry ? setTab('tracking') : handleUpdate({ my_status: 'plan_to_watch' as MyStatus })}
+                title={entry ? 'In your lists' : 'Add to watchlist'}
+                className={`flex h-12 w-12 items-center justify-center rounded-[4px] border-2 ${entry ? 'border-accent text-accent' : 'border-accent/70 text-accent hover:bg-accent/10'}`}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill={entry ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>
+              </button>
+              <div className="relative">
+                <button onClick={() => setActionsOpen(v => !v)} title="More actions"
+                  className="flex h-12 w-12 items-center justify-center rounded-[4px] border-2 border-border text-xl font-bold text-text-2 hover:text-text-1">⋯</button>
+                {actionsOpen && (
+                  <div className="absolute left-0 top-14 z-40 w-56 rounded-card border border-border bg-bg-1 p-1 shadow-2xl" onMouseLeave={() => setActionsOpen(false)}>
+                    {entry?.my_status !== 'completed' && (
+                      <button onClick={() => { setActionsOpen(false); handleMarkCompleted() }} className="w-full rounded px-3 py-2 text-left text-sm text-status-completed hover:bg-bg-2">✓ Mark completed</button>
+                    )}
+                    {entry?.my_status !== 'on_hold' && (
+                      <button onClick={() => { setActionsOpen(false); handleUpdate({ my_status: 'on_hold' as MyStatus }) }} className="w-full rounded px-3 py-2 text-left text-sm text-status-onhold hover:bg-bg-2">⏸ Put on hold</button>
+                    )}
+                    {entry?.my_status !== 'dropped' && (
+                      <button onClick={() => { setActionsOpen(false); handleDrop() }} className="w-full rounded px-3 py-2 text-left text-sm text-status-dropped hover:bg-bg-2">✕ Drop</button>
+                    )}
+                    {entry?.my_status === 'completed' && (
+                      <button onClick={() => { setActionsOpen(false); handleStartRewatch() }} className="w-full rounded px-3 py-2 text-left text-sm text-accent hover:bg-bg-2">↻ Start rewatch</button>
+                    )}
+                    <button onClick={() => { setActionsOpen(false); setTab('order') }} className="w-full rounded px-3 py-2 text-left text-sm text-text-2 hover:bg-bg-2">☰ Whole series: complete / drop…</button>
+                    {entry && (
+                      <button onClick={() => { setActionsOpen(false); handleRemove() }} className="w-full rounded border-t border-border px-3 py-2 text-left text-sm text-text-3 hover:bg-bg-2 hover:text-red-400">Remove from my lists</button>
+                    )}
+                  </div>
+                )}
+              </div>
+              <select value={entry?.my_status ?? ''} onChange={e => handleUpdate({ my_status: e.target.value as MyStatus })}
+                className="h-12 rounded-[4px] border-2 border-border bg-bg-0/60 px-3 text-sm font-semibold text-text-1 backdrop-blur">
+                <option value="">+ Add to list</option>
+                {STATUSES.map(st => <option key={st.value} value={st.value}>{st.label}</option>)}
+              </select>
+              {entry?.my_status !== 'completed' && anime.airing_status !== 'RELEASING' && anime.airing_status !== 'NOT_YET_RELEASED' && (
+                <button onClick={handleMarkCompleted} title="Watched it elsewhere? Marks every episode watched and the show Completed"
+                  className="flex h-12 items-center gap-2 rounded-[4px] border-2 border-status-completed/60 px-4 text-sm font-bold uppercase tracking-wide text-status-completed hover:bg-status-completed/10">
+                  ✓ Mark completed
+                </button>
+              )}
+              {entry?.my_status === 'completed' && (
+                <span className="flex h-12 items-center gap-2 rounded-[4px] bg-status-completed/15 px-4 text-sm font-bold uppercase tracking-wide text-status-completed">
+                  ✓ Completed{entry.finished_at ? ` · ${entry.finished_at}` : ''}
+                </span>
+              )}
+              {entry && total > 0 && entry.my_status !== 'completed' && (
+                <span className="font-mono text-sm text-text-3">{progress}/{total} watched</span>
               )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
-      <div className="mt-8 px-6 space-y-8">
+      {/* Tabs */}
+      <div className="sticky top-[60px] z-30 border-b border-border bg-bg-0/95 px-4 backdrop-blur lg:px-10">
+        <div className="flex gap-8">
+          {tabBtn('episodes', listed && total && listed < total ? `Episodes (${listed} of ${total})` : listed ? `Episodes (${listed})` : 'Episodes')}
+          {anime.anilist_id ? tabBtn('order', 'Watch Order') : null}
+          {tabBtn('tracking', 'Your Tracking')}
+          {tabBtn('more', 'More')}
+        </div>
+      </div>
+
+      <div className="space-y-8 px-4 pt-6 lg:px-10">
+        {tab === 'order' && anime.anilist_id && <WatchOrder anilistId={anime.anilist_id} />}
+
+        {tab === 'episodes' && (
+          listed > 0 ? (
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                {pages > 1 && (
+                  <select value={epPage} onChange={e => setEpPage(Number(e.target.value))}
+                    className="rounded-[4px] border border-border bg-bg-1 px-3 py-2 text-sm font-semibold text-text-1">
+                    {Array.from({ length: pages }, (_, i) => (
+                      <option key={i} value={i}>Episodes {i * EP_PAGE + 1}–{Math.min(listed, (i + 1) * EP_PAGE)}</option>
+                    ))}
+                  </select>
+                )}
+                {!paidLink && (
+                  <div className="flex items-center gap-2">
+                    <AudioToggle value={audio} onChange={setAudio} />
+                    <span className="text-xs text-text-3">
+                      {audio === 'dub' ? 'English dub' : 'Japanese with subtitles'} · all episodes
+                      {audio === 'dub' && dubCount != null && dubCount < airedCount && <span className="text-status-onhold"> · {dubCount} of {airedCount} aired episodes dubbed so far</span>}
+                      {audio === 'dub' && dubOf(anime.mal_id, anime.airing_status) === 'none' && <span className="text-status-onhold"> · no English dub is listed for this show — the sub will play</span>}
+                      {audio === 'dub' && dubOf(anime.mal_id, anime.airing_status) === 'ongoing' && <span className="text-status-onhold"> · dub still in progress — newer episodes may play subbed</span>}
+                    </span>
+                  </div>
+                )}
+                {paidLink && <span className="text-xs text-text-3">Episodes open on {paidLink.site} (Settings → Streaming Services)</span>}
+                <div className="flex-1" />
+                {nextAiring?.airAt && (
+                  <span className="text-xs text-text-3">E{nextAiring.number} airs {new Date(nextAiring.airAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</span>
+                )}
+                {entry && <div className="w-56"><ProgressBar current={progress} total={anime.episodes_total} accentColor={anime.cover_accent ?? undefined} onIncrement={handleIncrement} /></div>}
+              </div>
+              <div className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                {Array.from({ length: epTo - epFrom + 1 }, (_, i) => {
+                  const ep = epFrom + i
+                  const meta = epMeta.get(ep)
+                  const watched = ep <= progress || watchedEps.has(ep)
+                  return (
+                    <EpisodeCard key={ep} episode={ep} episodeTitle={meta?.title}
+                      thumbnail={meta?.thumbnail} fallback={anime.banner_url ?? anime.cover_url}
+                      watched={watched}
+                      onToggleWatched={() => setWatchedUpTo(watched ? ep - 1 : ep)}
+                      badge={ep === nextEp && entry && !watched ? <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">Up next</span> : undefined}
+                      onClick={() => playEp(ep)} />
+                  )
+                })}
+              </div>
+            </section>
+          ) : (
+            <div className="space-y-3 py-6">
+              <p className="text-sm text-text-3">
+                {anime.airing_status === 'NOT_YET_RELEASED' || airedCount === 0
+                  ? `No episodes have aired yet${nextAiring?.airAt ? ` — E${nextAiring.number} airs ${new Date(nextAiring.airAt).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}` : ''}.`
+                  : audio === 'dub' && dubCount === 0 ? 'No dubbed episodes are out yet — switch to Sub to watch now.'
+                  : "Episode count isn't known yet for this show."}
+              </p>
+              <button onClick={() => playEp(nextEp)} className="rounded-[4px] bg-accent px-5 py-2.5 text-sm font-bold uppercase text-white hover:bg-accent-hover">
+                Play episode {nextEp}
+              </button>
+            </div>
+          )
+        )}
+
+        {tab === 'tracking' && (
+          <>
         {/* Your tracking */}
         <section className="rounded-card border border-border bg-bg-1 p-5 space-y-4">
           <h2 className="font-display text-base font-semibold text-text-1">Your Tracking</h2>
@@ -395,105 +636,27 @@ export default function AnimeDetail() {
           </div>
         </section>
 
-        {/* Where to watch */}
-        <section>
-          <h2 className="mb-3 font-display text-base font-semibold text-text-1">Where to Watch</h2>
-          <div className="flex flex-wrap gap-2">
-            {/* Configured paid service links */}
-            {configuredServices.length > 0 && streamingLinks
-              .filter(l => configuredServices.some(s => l.site.toLowerCase().includes(s.toLowerCase())))
-              .map((link, i) => (
-                <a key={`c-${i}`} href={link.url} target="_blank" rel="noopener noreferrer"
-                  className="rounded-card border border-accent/50 bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20 transition-colors"
-                >{link.site}</a>
-              ))}
-            {/* Other known streaming links */}
-            {streamingLinks
-              .filter(l => !configuredServices.some(s => l.site.toLowerCase().includes(s.toLowerCase())))
-              .map((link, i) => (
-                <a key={`o-${i}`} href={link.url} target="_blank" rel="noopener noreferrer"
-                  className="rounded-card border border-border bg-bg-1 px-3 py-1.5 text-sm text-text-2 hover:bg-bg-2 transition-colors"
-                >{link.site}</a>
-              ))}
-            {/* Watch in-app — opens player at episode 1 or next unwatched */}
-            <button
-              onClick={() => {
-                const nextEp = (entry?.progress ?? 0) + 1
-                const params = new URLSearchParams({ title: anime.title })
-                if (anime.title_en) params.set('titleEn', anime.title_en)
-                if (anime.mal_id) params.set('malId', String(anime.mal_id))
-                if (anime.episodes_total) params.set('total', String(anime.episodes_total))
-                navigate(`/watch/${anime.id}/${nextEp}?${params}`)
-              }}
-              className="rounded-card border border-border bg-bg-1 px-3 py-1.5 text-sm text-text-3 hover:bg-bg-2 hover:text-text-1 transition-colors"
-            >Watch in app</button>
-          </div>
-        </section>
+          </>
+        )}
 
-        {/* Episodes */}
-        {anime.episodes_total && anime.episodes_total > 0 && (() => {
-          const watchedEps = new Set(events.map(ev => ev.episode))
-          const progress = entry?.progress ?? 0
-          const total = anime.episodes_total!
-          const showAll = !epCollapsed || total <= 50
-          const displayed = showAll ? total : Math.min(total, 50)
-
-          // Navigate to in-app player, or open paid service in browser
-          const handleEpClick = (e: React.MouseEvent, ep: number) => {
-            e.preventDefault()
-
-            // Check configured paid services first — open in browser
-            if (configuredServices.length > 0) {
-              const match = streamingLinks.find(l =>
-                configuredServices.some(s => l.site.toLowerCase().includes(s.toLowerCase()))
-              )
-              if (match) {
-                window.open(match.url, '_blank')
-                return
-              }
-            }
-
-            // Navigate to in-app player
-            const params = new URLSearchParams({ title: anime.title })
-            if (anime.title_en) params.set('titleEn', anime.title_en)
-            if (anime.mal_id) params.set('malId', String(anime.mal_id))
-            if (total) params.set('total', String(total))
-            navigate(`/watch/${anime.id}/${ep}?${params}`)
-          }
-
-          return (
-            <section>
-              <h2 className="mb-3 font-display text-base font-semibold text-text-1">
-                Episodes <span className="text-text-3 font-normal text-sm">({total})</span>
-              </h2>
-              <div className="flex flex-wrap gap-1.5">
-                {Array.from({ length: displayed }, (_, i) => {
-                  const ep = i + 1
-                  const watched = ep <= progress || watchedEps.has(ep)
-                  return (
-                    <button
-                      key={ep}
-                      onClick={(e) => handleEpClick(e, ep)}
-                      title={`Episode ${ep}${watched ? ' (watched)' : ''} — click to stream`}
-                      className={`flex items-center justify-center h-8 w-8 rounded text-xs font-mono transition-colors cursor-pointer ${
-                        watched
-                          ? 'bg-accent/30 text-accent hover:bg-accent/50'
-                          : 'bg-bg-2 text-text-3 hover:bg-bg-0 hover:text-text-1'
-                      }`}
-                    >{ep}</button>
-                  )
-                })}
-              </div>
-              {total > 50 && (
-                <button
-                  onClick={() => setEpCollapsed(!epCollapsed)}
-                  className="mt-2 text-xs text-accent hover:text-accent-hover"
-                >{epCollapsed ? `Show all ${total} episodes` : 'Show less'}</button>
-              )}
-            </section>
-          )
-        })()}
-
+        {tab === 'more' && (
+          <>
+            {streamingLinks.length > 0 && (
+              <section>
+                <h2 className="mb-3 font-display text-lg font-bold text-text-1">Official streams</h2>
+                <div className="flex flex-wrap gap-2">
+                  {streamingLinks.map((link, i) => {
+                    const mine = configuredServices.some(sv => link.site.toLowerCase().includes(sv.toLowerCase()))
+                    return (
+                      <a key={i} href={link.url} target="_blank" rel="noopener noreferrer"
+                        className={`rounded-[4px] border px-3 py-1.5 text-sm transition-colors ${mine ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20' : 'border-border bg-bg-1 text-text-2 hover:bg-bg-2'}`}>
+                        {link.site}
+                      </a>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
         {/* Relations */}
         {Object.keys(relationGroups).length > 0 && (
           <section>
@@ -538,6 +701,8 @@ export default function AnimeDetail() {
               ))}
             </div>
           </section>
+        )}
+          </>
         )}
       </div>
     </div>

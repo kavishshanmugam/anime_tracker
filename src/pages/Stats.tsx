@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import EmptyState from '@/components/EmptyState'
 import { SkeletonText } from '@/components/Skeleton'
 import type { MyStatus, Anime } from '@/types'
+import { displayTitle } from '@/lib/title'
 
 interface StatsData {
   totalAnime: number
@@ -126,7 +127,7 @@ export default function Stats() {
 
   if (loading) {
     return (
-      <div className="p-6 space-y-6">
+      <div className="space-y-6">
         {Array.from({ length: 4 }, (_, i) => <SkeletonText key={i} height="120px" />)}
       </div>
     )
@@ -134,7 +135,7 @@ export default function Stats() {
 
   if (!stats || stats.totalAnime === 0) {
     return (
-      <div className="p-6">
+      <div>
         <EmptyState
           title="No stats yet"
           description="Start tracking anime to see your watching patterns."
@@ -153,7 +154,7 @@ export default function Stats() {
 
   return (
     <div className="p-6 space-y-8">
-      <h1 className="font-display text-xl font-bold text-text-1">Stats</h1>
+      <h1 className="font-display text-3xl font-black text-text-1">Stats</h1>
 
       {/* Overview cards */}
       <div className="grid grid-cols-3 gap-4 md:grid-cols-5">
@@ -238,12 +239,12 @@ export default function Stats() {
               >
                 <div className="aspect-[2/3] overflow-hidden rounded-card bg-bg-2">
                   {anime.cover_url ? (
-                    <img src={anime.cover_url} alt={anime.title} loading="lazy" className="h-full w-full object-cover group-hover:scale-105 transition-transform" />
+                    <img src={anime.cover_url} alt={displayTitle(anime)} loading="lazy" className="h-full w-full object-cover group-hover:scale-105 transition-transform" />
                   ) : (
-                    <div className="flex h-full items-center justify-center text-xs text-text-3 p-2">{anime.title}</div>
+                    <div className="flex h-full items-center justify-center text-xs text-text-3 p-2">{displayTitle(anime)}</div>
                   )}
                 </div>
-                <p className="mt-1 text-xs text-text-1 line-clamp-2">{anime.title}</p>
+                <p className="mt-1 text-xs text-text-1 line-clamp-2">{displayTitle(anime)}</p>
               </button>
             ))}
           </div>
