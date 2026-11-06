@@ -4,6 +4,7 @@ import { parseMALExport, type MALImportResult } from '@/lib/mal-import'
 import { enrichBareEntries } from '@/lib/sync'
 import { getUserAnimeList, mapAniListToAnime } from '@/lib/anilist'
 import type { MyStatus } from '@/types'
+import SourcesSettings from '@/components/SourcesSettings'
 
 const STATUS_LABELS: Record<MyStatus, string> = {
   watching: 'Watching',
@@ -25,8 +26,6 @@ export default function Settings() {
   const [anilistUsername, setAnilistUsername] = useState('')
   const [anilistImporting, setAnilistImporting] = useState(false)
   const [streamingServices, setStreamingServices] = useState<string[]>([])
-  const [siteHealth, setSiteHealth] = useState<{ name: string; healthy: boolean; failures: number }[]>([])
-  const [consumetUrl, setConsumetUrl] = useState('')
 
   const ALL_STREAMING_SERVICES = [
     'Crunchyroll', 'Netflix', 'Hulu', 'Amazon Prime Video', 'Disney Plus',
@@ -40,8 +39,6 @@ export default function Settings() {
       window.api.db.getAppState('streaming_services').then(v => {
         if (v) setStreamingServices(JSON.parse(v))
       }).catch(() => {})
-      window.api.stream.siteHealth().then(setSiteHealth).catch(() => {})
-      window.api.stream.getApiUrl().then(setConsumetUrl).catch(() => {})
     }
   }, [])
 
@@ -189,8 +186,8 @@ export default function Settings() {
   }
 
   return (
-    <div className="max-w-2xl p-6 space-y-8">
-      <h1 className="font-display text-xl font-bold text-text-1">Settings</h1>
+    <div className="mx-auto max-w-3xl space-y-8">
+      <h1 className="font-display text-3xl font-black text-text-1">Settings</h1>
 
       {/* Export */}
       <section className="space-y-2">
@@ -311,6 +308,9 @@ export default function Settings() {
         )}
       </section>
 
+      {/* Playback defaults */}
+      <PlaybackDefaults />
+
       {/* Streaming Services */}
       <section className="space-y-3">
         <h2 className="font-display text-base font-semibold text-text-1">Streaming Services</h2>
@@ -339,40 +339,7 @@ export default function Settings() {
             )
           })}
         </div>
-        <div className="pt-3 border-t border-border space-y-2">
-          <h3 className="text-sm font-medium text-text-2">Free Streaming Sources</h3>
-          <p className="text-xs text-text-3">
-            Episodes play in-app via a hidden browser that extracts video sources. Results cached 2h.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {siteHealth.map(s => (
-              <span key={s.name} className={`rounded-card border px-3 py-1.5 text-sm ${
-                s.healthy ? 'border-green-500/30 text-green-400' : 'border-red-500/30 text-red-400'
-              }`}>
-                {s.name} {s.healthy ? '●' : `● (${s.failures} fails)`}
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-2 items-center mt-2">
-            <label className="text-xs text-text-3 shrink-0">Site URL:</label>
-            <input
-              type="text"
-              value={consumetUrl}
-              onChange={e => setConsumetUrl(e.target.value)}
-              onBlur={async () => {
-                if (consumetUrl) {
-                  await window.api?.stream.setApiUrl(consumetUrl)
-                  toast('Streaming site URL updated')
-                }
-              }}
-              placeholder="https://anitaku.so"
-              className="flex-1 rounded-card border border-border bg-bg-0 px-3 py-1.5 text-sm text-text-1 placeholder:text-text-3/50 focus:border-accent outline-none"
-            />
-          </div>
-          <p className="text-xs text-text-3 mt-1">
-            Default: anitaku.so — change here if the domain moves.
-          </p>
-        </div>
+        <SourcesSettings />
       </section>
 
       {/* Data info */}
@@ -392,5 +359,48 @@ export default function Settings() {
         <p className="text-xs text-text-3">A desktop app for tracking your anime watching habits.</p>
       </section>
     </div>
+  )
+}
+
+function PlaybackDefaults() {
+  const [audio, setAudio] = useState<'sub' | 'dub'>('sub')
+  const [subsOn, setSubsOn] = useState(true)
+  useEffect(() => {
+    window.api?.db.getAppState('audio_pref').then(v => setAudio(v === 'dub' ? 'dub' : 'sub')).catch(() => {})
+    window.api?.db.getAppState('player_prefs').then(v => {
+      try { if (v && JSON.parse(v).subs?.on === false) setSubsOn(false) } catch { /* */ }
+    }).catch(() => {})
+  }, [])
+  const saveSubs = async (on: boolean) => {
+    setSubsOn(on)
+    let prefs: any = {}
+    try { prefs = JSON.parse((await window.api?.db.getAppState('player_prefs')) ?? '{}') } catch { /* */ }
+    await window.api?.db.setAppState('player_prefs', JSON.stringify({ ...prefs, subs: { on, lang: prefs.subs?.lang ?? 'en' } }))
+  }
+  const seg = (active: boolean) => `px-4 py-1.5 text-sm font-semibold ${active ? 'bg-accent text-white' : 'bg-bg-0 text-text-3 hover:text-text-1'}`
+  return (
+    <section className="space-y-3">
+      <h2 className="font-display text-base font-semibold text-text-1">Playback</h2>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm text-text-1">Default audio</p>
+          <p className="text-xs text-text-3">Used for shows you haven't picked Sub/Dub for. Change it per show from the episode list.</p>
+        </div>
+        <div className="flex overflow-hidden rounded-[4px] border border-border">
+          <button className={seg(audio === 'sub')} onClick={() => { setAudio('sub'); window.api?.db.setAppState('audio_pref', 'sub') }}>Sub</button>
+          <button className={seg(audio === 'dub')} onClick={() => { setAudio('dub'); window.api?.db.setAppState('audio_pref', 'dub') }}>Dub</button>
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm text-text-1">Subtitles</p>
+          <p className="text-xs text-text-3">Turns on English subtitles whenever a video has a subtitle track. Sub episodes usually have them built into the picture anyway.</p>
+        </div>
+        <div className="flex overflow-hidden rounded-[4px] border border-border">
+          <button className={seg(subsOn)} onClick={() => saveSubs(true)}>English</button>
+          <button className={seg(!subsOn)} onClick={() => saveSubs(false)}>Off</button>
+        </div>
+      </div>
+    </section>
   )
 }

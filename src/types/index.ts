@@ -19,6 +19,81 @@ export interface StreamSources {
   skips: SkipTime[]
 }
 
+export interface ResolveResult {
+  url: string
+  isSearch: boolean
+  providerId?: string
+  providerName?: string
+  origin?: string
+  tried: { providerId: string; origin?: string; reason: string }[]
+  providers: { id: string; name: string; available: boolean }[]
+  audio?: 'sub' | 'dub'
+  audioFallback?: boolean
+}
+
+export interface PlayerState {
+  time: number
+  duration: number
+  paused: boolean
+  rate: number
+  /** Actual decoded video height (e.g. 1080). */
+  height: number
+  buffering: boolean
+  /** Which player API controls quality, or null if the site player exposes none. */
+  adapter: string | null
+  /** Quality levels high → low, e.g. ['1080p', '720p', '480p']. */
+  levels: string[]
+  mode: 'max' | 'auto' | 'manual'
+  /** Index into levels currently targeted (-1 = player auto). */
+  selected: number
+  playerAuto: boolean
+  downgrades: number
+  /** Controller messages since last poll, e.g. "Lowered to 720p (buffered 3.1s)". */
+  events: string[]
+  /** Separate subtitle tracks in the video (empty = none / burned-in). */
+  subs: { tracks: string[]; current: number; on: boolean; lang: string }
+  audio: 'sub' | 'dub'
+  /** Requests from the in-player ⚙ menu that need the app (e.g. switch to Dub). */
+  requests: { type: 'audio'; value: 'sub' | 'dub' }[]
+}
+
+export interface SafetyCheck { id: string; label: string; status: 'pass' | 'warn' | 'fail' | 'info'; detail: string }
+
+export interface SourceDomain {
+  origin: string
+  source: 'bundled' | 'manifest' | 'discovered' | 'user'
+  approved: boolean
+  usable: boolean
+  checking: boolean
+  verdict: 'safe' | 'pending' | 'blocked' | 'unreachable' | 'unchecked'
+  checks: SafetyCheck[]
+  checkedAt?: number
+  latencyMs?: number
+  failures: number
+  successes: number
+  consecutiveFailures: number
+  coolingDown: boolean
+  cooldownUntil?: number
+  lastError?: string
+  lastOkAt?: number
+}
+
+export interface SourcesSnapshot {
+  manifestUrl: string
+  manifestVersion: number
+  manifestSource: 'remote' | 'built-in'
+  manifestFetchedAt?: number
+  manifestError?: string
+  adblock: boolean
+  strictApproval: boolean
+  hasSafeBrowsingKey: boolean
+  discoveryLog: { at: number; providerId: string; message: string }[]
+  providers: {
+    id: string; name: string; enabled: boolean; priority: number; custom: boolean; layout: 'gogo' | 'generic'
+    discovering: boolean; lastDiscoveryAt?: number; domains: SourceDomain[]
+  }[]
+}
+
 export interface Anime {
   id: number
   mal_id: number | null
@@ -98,7 +173,7 @@ export interface WatchEvent {
   id: number
   anime_id: number
   episode: number
-  source: 'browser' | 'manual' | 'file' | 'bulk' | 'history' | 'in-app'
+  source: 'browser' | 'manual' | 'file' | 'bulk' | 'history' | 'in-app' | 'in-app · sub' | 'in-app · dub'
   watched_at: string
 }
 
@@ -189,17 +264,39 @@ export interface ElectronAPI {
     setAppState: (key: string, value: string) => Promise<void>
   }
   stream: {
-    resolveEpisode: (title: string, ep: number, titleEn?: string) => Promise<{ url: string; urls: string[]; site: string } | null>
-    resolveShow: (title: string) => Promise<{ url: string; urls: string[]; site: string } | null>
-    getSources: (title: string, ep: number, malId?: number) => Promise<StreamSources | null>
+    resolveEpisode: (title: string, ep: number, opts?: { titleEn?: string; providerId?: string; excludeOrigins?: string[]; audio?: 'sub' | 'dub'; anilistId?: number }) => Promise<ResolveResult>
     getSkipTimes: (malId: number, ep: number, duration?: number) => Promise<SkipTime[]>
-    learnSlug: (title: string, slug: string) => Promise<void>
-    clearCache: (title: string) => Promise<void>
-    prefetch: (title: string) => Promise<void>
+    learnFromUrl: (title: string, url: string, ep: number) => Promise<{ providerId: string; onEpisode: boolean; episode?: number; redirect?: string; audio: 'sub' | 'dub' } | null>
+    reportFailure: (url: string, reason: string) => Promise<void>
+    episodeCount: (title: string, audio: 'sub' | 'dub', opts?: { titleEn?: string; anilistId?: number }) => Promise<number | null>
+    useLink: (title: string, url: string, ep: number) => Promise<{ ok: boolean; message: string; url?: string; providerId?: string }>
+    clearCache: (title?: string) => Promise<void>
+    prefetch: (title: string, titleEn?: string) => Promise<void>
     cancelPrefetch: (title: string) => Promise<void>
-    siteHealth: () => Promise<{ name: string; healthy: boolean; failures: number }[]>
-    setApiUrl: (url: string) => Promise<void>
-    getApiUrl: () => Promise<string>
+    player: {
+      (webContentsId: number, cmd: { type: 'state'; prefs?: { rate?: number; mode?: 'max' | 'auto'; subs?: { on: boolean; lang: string }; audio?: 'sub' | 'dub' } }): Promise<PlayerState | null>
+      (webContentsId: number, cmd: { type: 'rate'; rate: number }): Promise<boolean | null>
+      (webContentsId: number, cmd: { type: 'quality'; mode: 'max' | 'auto' | 'manual'; index?: number }): Promise<boolean | null>
+      (webContentsId: number, cmd: { type: 'seek'; time: number }): Promise<boolean | null>
+    }
+    onBlocked: (callback: (info: { kind: string; detail: string }) => void) => () => void
+  }
+  sources: {
+    snapshot: () => Promise<SourcesSnapshot>
+    refreshManifest: () => Promise<{ ok: boolean; message: string }>
+    discover: (providerId?: string) => Promise<{ found: string[] }>
+    recheck: (origin?: string) => Promise<void>
+    approve: (origin: string, approved: boolean) => Promise<boolean>
+    removeDomain: (origin: string) => Promise<void>
+    addDomain: (providerId: string, url: string) => Promise<{ ok: boolean; message: string }>
+    addProvider: (input: { name: string; url: string; searchPath?: string; layout: 'gogo' | 'generic' }) => Promise<{ ok: boolean; message: string }>
+    removeProvider: (id: string) => Promise<void>
+    addSiteByLink: (url: string) => Promise<{ ok: boolean; message: string; providerId?: string; searchVerified?: boolean }>
+    testSearch: (id: string, title: string) => Promise<{ ok: boolean; message: string; url?: string }>
+    setProvider: (id: string, pref: { enabled?: boolean }) => Promise<void>
+    moveProvider: (id: string, dir: -1 | 1) => Promise<void>
+    setOptions: (opts: { manifestUrl?: string; adblock?: boolean; strictApproval?: boolean; safeBrowsingKey?: string | null }) => Promise<void>
+    onChanged: (callback: () => void) => () => void
   }
   fs: {
     selectFile: (filters?: { name: string; extensions: string[] }[]) => Promise<string | null>

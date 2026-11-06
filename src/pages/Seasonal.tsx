@@ -1,5 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import PosterCard from '@/components/PosterCard'
+import { useDubs } from '@/hooks/useDubs'
+import FilterSelects from '@/components/FilterSelects'
 import { getSeasonAnime, mapAniListToAnime } from '@/lib/anilist'
 import { useToast } from '@/hooks/useToast'
 import { useLibrary } from '@/hooks/useLibrary'
@@ -24,6 +27,9 @@ export default function Seasonal() {
   const [year, setYear] = useState(current.year)
   const [anime, setAnime] = useState<AniListMedia[]>([])
   const [loading, setLoading] = useState(true)
+  const [audioFilter, setAudioFilter] = useState<'' | 'dub' | 'dub_complete' | 'sub_only'>('')
+  const [statusFilter, setStatusFilter] = useState<'' | 'RELEASING' | 'FINISHED'>('')
+  const dubOf = useDubs()
 
   const libraryAnilistIds = useMemo(() => new Set(entries.map(e => e.anilist_id).filter(Boolean)), [entries])
 
@@ -51,11 +57,19 @@ export default function Seasonal() {
   }
 
   const years = Array.from({ length: 10 }, (_, i) => current.year - i)
+  const shown = anime.filter(m => {
+    const d = dubOf(m.idMal, m.status)
+    if (audioFilter === 'dub' && d !== 'complete' && d !== 'ongoing') return false
+    if (audioFilter === 'dub_complete' && d !== 'complete') return false
+    if (audioFilter === 'sub_only' && (d === 'complete' || d === 'ongoing')) return false
+    if (statusFilter && m.status !== statusFilter) return false
+    return true
+  })
 
   return (
-    <div className="p-6">
+    <div>
       <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <h1 className="font-display text-xl font-bold text-text-1">Seasonal</h1>
+        <h1 className="font-display text-3xl font-black text-text-1">Seasonal</h1>
         <div className="flex gap-1">
           {SEASONS.map(s => (
             <button
@@ -74,47 +88,28 @@ export default function Seasonal() {
         >
           {years.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
-        <span className="text-xs text-text-3 ml-auto">{anime.length} shows</span>
+        <FilterSelects audio={audioFilter} setAudio={setAudioFilter} status={statusFilter} setStatus={setStatusFilter} />
+        <span className="text-xs text-text-3 ml-auto">{shown.length} shows</span>
       </div>
 
-      {loading ? <SkeletonGrid count={12} /> : anime.length === 0 ? (
+      {loading ? <SkeletonGrid count={12} /> : shown.length === 0 ? (
         <EmptyState title="No anime found" description="Try a different season." />
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {anime.map(media => {
+        <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+          {shown.map(media => {
             const inLibrary = libraryAnilistIds.has(media.id)
             return (
-              <div key={media.id} className="group">
-                <button
-                  onClick={() => navigate(`/anime/${media.id}`)}
-                  className="w-full text-left"
-                >
-                  <div className="aspect-[2/3] overflow-hidden rounded-card bg-bg-2 relative">
-                    <img
-                      src={media.coverImage.extraLarge || media.coverImage.large}
-                      alt={media.title.romaji}
-                      loading="lazy"
-                      className="h-full w-full object-cover group-hover:scale-105 transition-transform"
-                    />
-                    {inLibrary && (
-                      <span className="absolute top-1.5 right-1.5 rounded bg-accent/90 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                        In library
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-2 text-sm font-medium text-text-1 line-clamp-2">{media.title.romaji}</p>
-                </button>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-[11px] text-text-3">{media.format ?? ''} {media.episodes ? `· ${media.episodes} eps` : ''}</span>
-                  {media.meanScore && <span className="text-[11px] text-text-3">· {media.meanScore}%</span>}
-                </div>
-                {!inLibrary && (
-                  <button
-                    onClick={() => handleAddToPlan(media)}
-                    className="mt-1 rounded bg-accent/20 px-2 py-0.5 text-[11px] text-accent hover:bg-accent/30"
-                  >Add to plan</button>
-                )}
-              </div>
+              <PosterCard key={media.id}
+                title={media.title.english ?? media.title.romaji}
+                cover={media.coverImage.extraLarge || media.coverImage.large}
+                synopsis={media.description}
+                meta={[media.format ?? '', media.episodes ? `${media.episodes} eps` : '', media.meanScore ? `★ ${media.meanScore}%` : '']}
+                subtitle={inLibrary ? <span className="text-accent">In your lists</span> : media.genres.slice(0, 2).join(' · ')}
+                dub={dubOf(media.idMal, media.status)}
+                onClick={() => navigate(`/anime/${media.id}`)}
+                onBookmark={inLibrary ? undefined : () => handleAddToPlan(media)}
+                bookmarked={inLibrary}
+              />
             )
           })}
         </div>
@@ -122,3 +117,4 @@ export default function Seasonal() {
     </div>
   )
 }
+

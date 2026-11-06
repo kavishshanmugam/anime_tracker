@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 
 export interface AppNotification {
   id: string
-  type: 'new_episode' | 'sequel'
+  type: 'new_episode' | 'sequel' | 'dub'
   title: string
   body: string
   animeId?: number

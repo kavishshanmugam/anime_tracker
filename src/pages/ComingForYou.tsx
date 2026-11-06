@@ -48,11 +48,11 @@ export default function ComingForYou() {
     } catch { toast('Failed to add') }
   }
 
-  if (loading) return <div className="p-6"><SkeletonGrid count={4} /></div>
+  if (loading) return <div><SkeletonGrid count={4} /></div>
 
   if (items.length === 0) {
     return (
-      <div className="p-6">
+      <div>
         <EmptyState
           title="No upcoming sequels or spin-offs detected yet"
           description="Add anime to your library and we'll watch for new seasons."
@@ -62,8 +62,8 @@ export default function ComingForYou() {
   }
 
   return (
-    <div className="p-6">
-      <h1 className="mb-6 font-display text-xl font-bold text-text-1">Coming For You</h1>
+    <div>
+      <h1 className="mb-6 font-display text-3xl font-black text-text-1">Coming For You</h1>
       <div className="grid gap-4 md:grid-cols-2">
         {items.map(fw => (
           <div key={fw.id} className="rounded-card border border-border bg-bg-1 p-4">

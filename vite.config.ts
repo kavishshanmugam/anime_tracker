@@ -38,6 +38,20 @@ export default defineConfig({
           },
         },
       },
+      {
+        // Session preload for the streaming <webview>: installs the playback controller.
+        entry: 'electron/stream-preload.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            lib: { entry: 'electron/stream-preload.ts', formats: ['cjs'] },
+            rollupOptions: {
+              external: ['electron'],
+              output: { format: 'cjs', entryFileNames: '[name].js' },
+            },
+          },
+        },
+      },
     ]),
     renderer(),
   ],

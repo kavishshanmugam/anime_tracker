@@ -19,7 +19,7 @@ export default function AnimeGrid({ items, onAnimeClick, loading, emptyMessage }
   }
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
       {items.map((anime) => (
         <AnimeCard
           key={anime.id}

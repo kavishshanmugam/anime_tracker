@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { initDatabase, registerAllHandlers, getAppState, setAppState } from './database'
-import { registerStreamHandlers } from './stream-resolver'
+import { registerStreamHandlers, guardWebview, getEngine, flushStreamState, STREAM_PARTITION } from './stream-resolver'
 
 const isDev = !app.isPackaged
 
@@ -76,12 +76,34 @@ function createWindow(): void {
     mainWindow.loadFile(distPath)
   }
 
-  // ponytail: guard webview src to streaming domain only
-  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
-    // Strip away preload scripts
+  // Webviews: no preload/node, sandboxed, forced into the hardened streaming
+  // partition, and the initial src must be a domain that passed the safety gate.
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     delete webPreferences.preload
     webPreferences.nodeIntegration = false
     webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    // NOTE: don't enable nodeIntegrationInSubFrames — with a sandboxed webview it crashes Electron
+    // (FATAL NOTREACHED) as soon as a page embeds a cross-origin player iframe. The playback controller
+    // is injected into subframes by the main process instead (stream-resolver inVideoFrame).
+    webPreferences.nodeIntegrationInSubFrames = false
+    params.partition = STREAM_PARTITION
+    const engine = getEngine()
+    if (params.src && engine && !engine.isAllowedNavigation(params.src)) {
+      console.warn(`[security] refused webview for unvetted URL ${params.src}`)
+      event.preventDefault()
+    }
+  })
+
+  // External links (window.open / target=_blank) open in the system browser, never in-app.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) shell.openExternal(url).catch(() => {})
+    return { action: 'deny' }
+  })
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const appUrl = mainWindow?.webContents.getURL() ?? ''
+    if (url.startsWith('file:') || url.startsWith('http://localhost') || url.split('#')[0] === appUrl.split('#')[0]) return
+    event.preventDefault()
   })
 
   mainWindow.on('closed', () => {
@@ -120,6 +142,10 @@ app.on('second-instance', () => {
   }
 })
 
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() === 'webview') guardWebview(contents)
+})
+
 app.whenReady().then(async () => {
   try {
     backupDb()
@@ -140,6 +166,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', () => {
+  flushStreamState()
   if (wss) { try { wss.close() } catch {} }
 })
 

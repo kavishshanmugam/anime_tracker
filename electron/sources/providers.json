@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "updated": "2026-11-06",
+  "tlds": ["so", "to", "pe", "bz", "io", "gg", "tv", "cc", "co", "me", "fi", "by", "ws", "lol", "vc", "se", "li", "nz", "mx", "sh"],
+  "adHosts": [
+    "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
+    "popads.net", "popcash.net", "propellerads.com", "propellerclick.com", "adsterra.com", "adsterra.network",
+    "exoclick.com", "exosrv.com", "juicyads.com", "trafficjunky.net", "hilltopads.net", "hilltopads.com",
+    "clickadu.com", "onclickads.net", "onclkds.com", "adcash.com", "a-ads.com", "monetag.com",
+    "galaksion.com", "richpush.co", "pushame.com", "acint.net", "mgid.com", "taboola.com", "outbrain.com",
+    "revcontent.com", "zeropark.com", "bidvertiser.com", "adskeeper.com", "pemsrv.com", "realsrv.com",
+    "tsyndicate.com", "dtscout.com", "dtscdn.com", "histats.com", "yandex.ru", "mc.yandex.ru",
+    "verticallysaturate.com"
+  ],
+  "providers": [
+    {
+      "id": "gogo",
+      "name": "Gogoanime / Anitaku",
+      "layout": "gogo",
+      "priority": 10,
+      "brandLabels": ["anitaku", "gogoanime", "gogoanime3", "gogoanimes", "gogoanimehd"],
+      "domains": ["https://anitaku.to", "https://anitaku.so", "https://anitaku.pe", "https://anitaku.bz", "https://gogoanime3.co"],
+      "hubs": [],
+      "searchPath": "/search.html?keyword={q}",
+      "fingerprint": ["class=[\"']last_episodes", "href=[\"']/category/[a-z0-9]"],
+      "showLink": [
+        "<p\\s+class=[\"']name[\"']>\\s*<a\\s+href=[\"'](/category/[a-z0-9][\\w-]*)[\"'][^>]*title=[\"']([^\"']+)[\"']",
+        "href=[\"'](/category/[a-z0-9][\\w-]*)[\"']"
+      ],
+      "episodeLink": [
+        "href=[\"']\\s*((?:https?://[^\"']*)?/[^\"']*-episode-{ep}(?!\\d))\\s*[\"']"
+      ],
+      "episodeAjax": {
+        "idPattern": "id=[\"']movie_id[\"'][^>]*value=[\"'](\\d+)[\"']|value=[\"'](\\d+)[\"'][^>]*id=[\"']movie_id[\"']",
+        "url": "/ajax/load-list-episode?ep_start=0&ep_end=9999&id={id}"
+      },
+      "episodeUrlPattern": "^/([a-z0-9][\\w-]*?)-episode-(\\d+)",
+      "showUrlPattern": "^/category/([a-z0-9][\\w-]*)",
+      "episodeUrlTemplate": "/{slug}-episode-{ep}",
+      "showPathTemplate": "/category/{slug}"
+    },
+    {
+      "id": "9anime",
+      "name": "9anime (9anime.by)",
+      "layout": "generic",
+      "priority": 20,
+      "brandLabels": ["9anime", "9animetv", "aniwave"],
+      "domains": ["https://9anime.by"],
+      "hubs": [],
+      "searchPath": "/?s={q}",
+      "fingerprint": ["animestream", "class=[\"'][^\"']*\\b(?:bsx|listupd|animposx)\\b"],
+      "showLink": ["href=[\"'](?:https?://[^/\"']+)?(/anime/[a-z0-9][\\w-]*/)[\"']"],
+      "episodeLink": ["href=[\"'](?:https?://[^/\"']+)?(/[a-z0-9][\\w-]*-episode-{ep}-english-(?:subbed|dubbed)/)[\"']"],
+      "episodeUrlPattern": "^/([a-z0-9][\\w-]*?)-episode-(\\d+)",
+      "showUrlPattern": "^/anime/([a-z0-9][\\w-]*?)/?$",
+      "episodeUrlTemplate": "/{slug}-episode-{ep}-english-subbed/",
+      "showPathTemplate": "/anime/{slug}/"
+    },
+    {
+      "id": "animesuge",
+      "name": "AnimeSuge (animesuge.ws)",
+      "layout": "generic",
+      "priority": 30,
+      "brandLabels": ["animesuge"],
+      "domains": ["https://animesuge.ws"],
+      "hubs": [],
+      "searchPath": "/?s={q}",
+      "fingerprint": ["animestream", "class=[\"'][^\"']*\\b(?:bsx|listupd|animposx)\\b"],
+      "showLink": ["href=[\"'](?:https?://[^/\"']+)?(/anime/[a-z0-9][\\w-]*/)[\"']"],
+      "episodeLink": ["href=[\"'](?:https?://[^/\"']+)?(/[a-z0-9][\\w-]*-episode-{ep}-english-(?:subbed|dubbed)/)[\"']"],
+      "episodeUrlPattern": "^/([a-z0-9][\\w-]*?)-episode-(\\d+)",
+      "showUrlPattern": "^/anime/([a-z0-9][\\w-]*?)/?$",
+      "episodeUrlTemplate": "/{slug}-episode-{ep}-english-subbed/",
+      "showPathTemplate": "/anime/{slug}/"
+    },
+    {
+      "id": "animesuge-alt",
+      "name": "AnimeSuge (animesuge.lol)",
+      "layout": "generic",
+      "priority": 40,
+      "brandLabels": ["animesuge"],
+      "domains": ["https://animesuge.lol"],
+      "hubs": [],
+      "searchPath": "/search?s_keyword={q}"
+    },
+    {
+      "id": "4anime",
+      "name": "4anime (4anime.lol)",
+      "layout": "generic",
+      "priority": 50,
+      "brandLabels": ["4anime", "4animes"],
+      "domains": ["https://4anime.lol"],
+      "hubs": [],
+      "browserOnly": true,
+      "searchPath": "/?s={q}",
+      "episodeUrlPattern": "^/([a-z0-9][\\w-]*?)-episode-(\\d+)",
+      "showUrlPattern": "^/anime/([a-z0-9][\\w-]*?)/?$",
+      "episodeUrlTemplate": "/{slug}-episode-{ep}-english-subbed/",
+      "showPathTemplate": "/anime/{slug}/"
+    }
+  ]
+}

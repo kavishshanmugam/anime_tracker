@@ -1,325 +1,205 @@
-import { ipcMain, net } from 'electron'
+import { BrowserWindow, ipcMain, net, session, webContents } from 'electron'
+import path from 'path'
+import { PLAYER_HOOK_SOURCE } from './player-hook'
+import { SourceEngine } from './sources/engine'
+import { setFetchImpl, getJson } from './sources/http'
+import { hostOf } from './sources/domain'
 
-// ponytail: auto-resolves the slug from the streaming site's search page,
-// so episodes play directly without user interaction. Slugs are persisted
-// to DB via app_state so they survive restarts.
+// IPC glue between the renderer and the SourceEngine, plus hardening of the
+// 'persist:streaming' session used by the player <webview>.
 
 const ANISKIP_BASE = 'https://api.aniskip.com/v2'
-let siteDomain = 'https://anitaku.so'
+export const STREAM_PARTITION = 'persist:streaming'
+const HEALTH_INTERVAL = 20 * 60_000
 
-// ponytail: mirror list for parallel resolution, first hit wins
-// Add mirrors here to try multiple sites simultaneously
-let siteMirrors: string[] = []
+let engine: SourceEngine | null = null
+export function getEngine() { return engine }
 
-interface SkipTime {
-  type: 'op' | 'ed' | 'recap' | 'mixed-op' | 'mixed-ed'
-  startTime: number
-  endTime: number
-}
-
-function slugify(title: string): string {
-  return title.toLowerCase().replace(/['']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').replace(/-+/g, '-')
-}
-
-function cleanTitle(title: string): string {
-  return title.replace(/\s*\(\d{4}\)\s*/g, ' ').replace(/[^a-zA-Z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
-function fetchRaw(url: string, timeoutMs = 10000, accept = 'application/json'): Promise<string | null> {
-  return new Promise((resolve) => {
-    try {
-      const request = net.request({ url, method: 'GET', redirect: 'follow' })
-      request.setHeader('Accept', accept)
-      let body = '', resolved = false
-      const timer = setTimeout(() => { if (!resolved) { resolved = true; request.abort(); resolve(null) } }, timeoutMs)
-      request.on('response', (res) => {
-        if (res.statusCode !== 200) { clearTimeout(timer); if (!resolved) { resolved = true; resolve(null) } return }
-        res.on('data', (c) => { body += c.toString() })
-        res.on('end', () => { clearTimeout(timer); if (!resolved) { resolved = true; resolve(body) } })
-      })
-      request.on('error', () => { clearTimeout(timer); if (!resolved) { resolved = true; resolve(null) } })
-      request.end()
-    } catch { resolve(null) }
-  })
-}
-
-function fetchJson<T>(url: string, timeoutMs = 10000): Promise<T | null> {
-  return fetchRaw(url, timeoutMs).then(body => {
-    if (!body) return null
-    try { return JSON.parse(body) } catch { return null }
-  })
-}
-
-// Slug cache: title key → slug (persisted to DB via app_state)
-const slugCache = new Map<string, string>()
-let dbGetAppState: ((key: string) => string | null) | null = null
-let dbSetAppState: ((key: string, value: string) => void) | null = null
-const SLUG_DB_KEY = 'slug_cache'
-
-function loadSlugCache() {
-  if (!dbGetAppState) return
-  try {
-    const raw = dbGetAppState(SLUG_DB_KEY)
-    if (raw) {
-      const entries = JSON.parse(raw) as [string, string][]
-      for (const [k, v] of entries) slugCache.set(k, v)
-    }
-  } catch {}
-}
-
-function saveSlugCache() {
-  if (!dbSetAppState) return
-  try {
-    dbSetAppState(SLUG_DB_KEY, JSON.stringify([...slugCache.entries()]))
-  } catch {}
-}
-
-// ponytail: LRU(2) warm cache — stores the show page URL so we don't re-search
-interface WarmEntry { showPageUrl: string; site: string; resolvedAt: number }
-const warmCache = new Map<string, WarmEntry>()
-const WARM_MAX = 2
-
-function warmSet(titleKey: string, entry: WarmEntry) {
-  warmCache.delete(titleKey) // re-insert to update recency
-  if (warmCache.size >= WARM_MAX) {
-    const oldest = warmCache.keys().next().value!
-    warmCache.delete(oldest)
-  }
-  warmCache.set(titleKey, entry)
-}
-
-// ponytail: generation counter per title for cancellation
-const prefetchGen = new Map<string, number>()
-
-// Step 1: Search the site → find the show/category page URL from results
-async function findShowPage(title: string, domain: string): Promise<string | null> {
-  const searchUrl = `${domain}/search.html?keyword=${encodeURIComponent(cleanTitle(title))}`
-  const html = await fetchRaw(searchUrl, 10000, 'text/html')
-  if (!html) return null
-
-  // Look for category page link: /category/show-slug
-  const categoryMatch = html.match(/href=["'](\/category\/[a-z0-9][\w-]*)["']/i)
-  if (categoryMatch) return `${domain}${categoryMatch[1]}`
-
-  // Some sites use direct show page links in results
-  const showLink = html.match(/<a\s+href=["'](\/[a-z0-9][\w-]*)["'][^>]*class=["'][^"']*name["']/i)
-  if (showLink) return `${domain}${showLink[1]}`
-
-  // Broader: first link inside a list item that looks like a result
-  const resultLink = html.match(/<li[^>]*>[\s\S]*?<a\s+href=["'](\/[a-z0-9][\w/-]*)["']/i)
-  if (resultLink) return `${domain}${resultLink[1]}`
-
-  return null
-}
-
-// Step 2: Fetch the show page → find the actual episode link
-async function findEpisodeUrl(showPageUrl: string, ep: number): Promise<string | null> {
-  const html = await fetchRaw(showPageUrl, 10000, 'text/html')
-  if (!html) return null
-
-  // ponytail: look for actual episode links in the page HTML
-  // Gogoanime/anitaku pattern: links like /show-slug-episode-N
-  // We search for the exact episode number in href attributes
-  // ponytail: (?!\d) prevents ep 1 from matching ep 10/11/etc
-  const epPatterns = [
-    new RegExp(`href=["'](https?://[^"']*-episode-${ep}(?!\\d))[^"']*["']`, 'i'),
-    new RegExp(`href=["'](\/[^"']*-episode-${ep}(?!\\d))[^"']*["']`, 'i'),
-    new RegExp(`href=["']([^"']*[?&]ep=${ep}(?!\\d))[^"']*["']`, 'i'),
-  ]
-
-  for (const pattern of epPatterns) {
-    const match = html.match(pattern)
-    if (match) {
-      const href = match[1].replace(/["']$/, '')
-      // Make absolute if relative
-      if (href.startsWith('/')) {
-        const origin = new URL(showPageUrl).origin
-        return `${origin}${href}`
-      }
-      return href
-    }
-  }
-
-  // ponytail: gogoanime often has an episode list loaded via ajax with an id range
-  // Look for the anime movie-id and construct the episode list URL
-  const movieIdMatch = html.match(/value=["'](\d+)["'][^>]*id=["']movie_id["']/i)
-    || html.match(/id=["']movie_id["'][^>]*value=["'](\d+)["']/i)
-  if (movieIdMatch) {
-    const movieId = movieIdMatch[1]
-    // Fetch the episode list ajax endpoint
-    const ajaxUrl = `${new URL(showPageUrl).origin}/ajax/load-list-episode?ep_start=0&ep_end=9999&id=${movieId}`
-    const ajaxHtml = await fetchRaw(ajaxUrl, 10000, 'text/html')
-    if (ajaxHtml) {
-      const ajaxEpMatch = ajaxHtml.match(new RegExp(`href=["']\\s*([^"']*-episode-${ep}(?!\\d))\\s*["']`, 'i'))
-      if (ajaxEpMatch) {
-        const href = ajaxEpMatch[1].trim()
-        if (href.startsWith('/')) return `${new URL(showPageUrl).origin}${href}`
-        if (href.startsWith('http')) return href
-        return `${new URL(showPageUrl).origin}/${href}`
-      }
-    }
-  }
-
-  return null
-}
-
-// Combined: search → show page → episode link, across all mirrors in parallel
-async function resolveEpisodeFromSite(title: string, ep: number, domain: string): Promise<{ url: string; showPageUrl: string; site: string } | null> {
-  const showPageUrl = await findShowPage(title, domain)
-  if (!showPageUrl) return null
-
-  const episodeUrl = await findEpisodeUrl(showPageUrl, ep)
-  if (!episodeUrl) return null
-
-  return { url: episodeUrl, showPageUrl, site: domain }
-}
-
-async function resolveEpisodeParallel(title: string, ep: number): Promise<{ url: string; showPageUrl: string; site: string } | null> {
-  const domains = [siteDomain, ...siteMirrors.filter(m => m !== siteDomain)]
-
-  if (domains.length === 1) {
-    return resolveEpisodeFromSite(title, ep, domains[0])
-  }
-
-  try {
-    return await Promise.any(
-      domains.map(d => resolveEpisodeFromSite(title, ep, d).then(r => {
-        if (!r) throw new Error('no result')
-        return r
-      }))
-    )
-  } catch {
-    return null
-  }
-}
-
-// Prefetch: find the show page URL in background so episode resolution is faster later
-async function prefetchShowPage(title: string): Promise<void> {
-  const titleKey = slugify(title)
-  if (slugCache.has(titleKey) || warmCache.has(titleKey)) return
-
-  const gen = (prefetchGen.get(titleKey) ?? 0) + 1
-  prefetchGen.set(titleKey, gen)
-
-  const domains = [siteDomain, ...siteMirrors.filter(m => m !== siteDomain)]
-
-  // ponytail: just find the show page, don't resolve a specific episode
-  let showPageUrl: string | null = null
-  let site = siteDomain
-  if (domains.length === 1) {
-    showPageUrl = await findShowPage(title, domains[0])
-  } else {
-    try {
-      const result = await Promise.any(
-        domains.map(d => findShowPage(title, d).then(url => {
-          if (!url) throw new Error('no result')
-          return { url, site: d }
-        }))
-      )
-      showPageUrl = result.url
-      site = result.site
-    } catch {}
-  }
-
-  // Check if cancelled
-  if (prefetchGen.get(titleKey) !== gen) return
-
-  if (showPageUrl) {
-    slugCache.set(titleKey, showPageUrl)
-    saveSlugCache()
-    warmSet(titleKey, { showPageUrl, site, resolvedAt: Date.now() })
-    console.log(`[stream] Prefetched show page for "${title}": ${showPageUrl}`)
-  }
-}
-
-async function resolveUrl(title: string, ep: number): Promise<{ url: string; isSearch: boolean; site: string }> {
-  const titleKey = slugify(title)
-
-  // Check if we have a cached show page URL (from prefetch or previous resolve)
-  const cachedShowPage = slugCache.get(titleKey) || warmCache.get(titleKey)?.showPageUrl
-  const cachedSite = warmCache.get(titleKey)?.site ?? siteDomain
-
-  if (cachedShowPage) {
-    // Fetch the show page and find the actual episode link
-    const episodeUrl = await findEpisodeUrl(cachedShowPage, ep)
-    if (episodeUrl) {
-      return { url: episodeUrl, isSearch: false, site: cachedSite }
-    }
-    // Show page cached but episode not found — try full resolve
-  }
-
-  // Full resolve: search → show page → episode link
-  try {
-    const result = await resolveEpisodeParallel(title, ep)
-    if (result) {
-      slugCache.set(titleKey, result.showPageUrl)
-      saveSlugCache()
-      warmSet(titleKey, { showPageUrl: result.showPageUrl, site: result.site, resolvedAt: Date.now() })
-      console.log(`[stream] Resolved episode from "${title}" ep ${ep}: ${result.url}`)
-      return { url: result.url, isSearch: false, site: result.site }
-    }
-  } catch {
-    // Fall through to search page
-  }
-
-  // Fallback: load search page in webview for manual selection
-  return { url: `${siteDomain}/search.html?keyword=${encodeURIComponent(cleanTitle(title))}`, isSearch: true, site: siteDomain }
-}
+interface SkipTime { type: 'op' | 'ed' | 'recap' | 'mixed-op' | 'mixed-ed'; startTime: number; endTime: number }
 
 async function fetchSkipTimes(malId: number, ep: number, duration?: number): Promise<SkipTime[]> {
-  const len = duration ?? 1440
-  const result = await fetchJson<{
-    found: boolean
-    results: { skipType: string; interval: { startTime: number; endTime: number } }[]
-  }>(`${ANISKIP_BASE}/skip-times/${malId}/${ep}?types=op&types=ed&types=recap&types=mixed-op&types=mixed-ed&episodeLength=${len}`)
+  const len = Math.round(duration ?? 1440)
+  const result = await getJson<{ found: boolean; results: { skipType: string; interval: { startTime: number; endTime: number } }[] }>(
+    `${ANISKIP_BASE}/skip-times/${malId}/${ep}?types=op&types=ed&types=recap&types=mixed-op&types=mixed-ed&episodeLength=${len}`)
   if (!result?.found || !result.results) return []
   return result.results.map(r => ({ type: r.skipType as SkipTime['type'], startTime: r.interval.startTime, endTime: r.interval.endTime }))
 }
 
-export function registerStreamHandlers(getAppState?: (key: string) => string | null, setAppState?: (key: string, value: string) => void) {
-  if (getAppState) dbGetAppState = getAppState
-  if (setAppState) dbSetAppState = setAppState
-  loadSlugCache()
-  ipcMain.handle('stream:resolveEpisode', async (_event, title: string, ep: number) => {
-    const { url, isSearch, site } = await resolveUrl(title, ep)
-    console.log(`[stream] ${isSearch ? 'Search' : 'Direct'}: ${url}`)
-    return { url, isSearch, site }
-  })
-
-  ipcMain.handle('stream:resolveShow', async (_event, title: string) => {
-    const { url, isSearch, site } = await resolveUrl(title, 1)
-    return { url, isSearch, site }
-  })
-
-  // ponytail: prefetch starts background resolution when user opens anime detail page
-  ipcMain.handle('stream:prefetch', async (_event, title: string) => {
-    prefetchShowPage(title).catch(() => {})
-  })
-
-  // ponytail: cancel prefetch when user navigates away
-  ipcMain.handle('stream:cancelPrefetch', async (_event, title: string) => {
-    const titleKey = slugify(title)
-    // Bump generation to invalidate any in-flight prefetch
-    prefetchGen.set(titleKey, (prefetchGen.get(titleKey) ?? 0) + 1)
-  })
-
-  ipcMain.handle('stream:learnSlug', async (_event, title: string, slug: string) => {
-    slugCache.set(slugify(title), slug)
-    saveSlugCache()
-    console.log(`[stream] Learned slug for "${title}": ${slug}`)
-  })
-
-  ipcMain.handle('stream:getSources', async () => null)
-
-  ipcMain.handle('stream:getSkipTimes', async (_event, malId: number, ep: number, duration?: number) => {
-    return fetchSkipTimes(malId, ep, duration)
-  })
-
-  ipcMain.handle('stream:clearCache', async (_event, title?: string) => {
-    if (title) { slugCache.delete(slugify(title)) } else { slugCache.clear() }
-    saveSlugCache()
-  })
-  ipcMain.handle('stream:siteHealth', async () => [{ name: siteDomain, healthy: true, failures: 0 }])
-  ipcMain.handle('stream:setApiUrl', async (_event, url: string) => { siteDomain = url.replace(/\/$/, ''); slugCache.clear(); warmCache.clear(); saveSlugCache() })
-  ipcMain.handle('stream:getApiUrl', async () => siteDomain)
+function broadcast(channel: string, payload: unknown) {
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.send(channel, payload)
 }
+
+/** Lock down the player session: ad blocking, no downloads, no permissions, no popups. */
+function hardenStreamingSession() {
+  const ses = session.fromPartition(STREAM_PARTITION)
+  // Playback controller (speed + adaptive quality) in every frame, before page scripts.
+  ses.setPreloads([path.join(__dirname, 'stream-preload.js')])
+  ses.setUserAgent(ses.getUserAgent().replace(/\s?(Electron|senpai)\/\S+/gi, ''))
+
+  ses.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, cb) => {
+    const host = hostOf(details.url)
+    if (engine?.isAdHost(host)) return cb({ cancel: true })
+    // Never load plain-HTTP top-level documents in the player.
+    if (details.resourceType === 'mainFrame' && details.url.startsWith('http:')) return cb({ cancel: true })
+    cb({})
+  })
+
+  ses.on('will-download', (event, item) => {
+    // Read details first; preventDefault() alone cancels it (calling item.cancel() as well is invalid).
+    let detail = ''
+    try { detail = item.getFilename() || hostOf(item.getURL()) } catch { /* */ }
+    event.preventDefault()
+    broadcast('stream:blocked', { kind: 'download', detail })
+  })
+
+  // Only fullscreen (for the video player) is granted. No notifications, camera, location, clipboard, etc.
+  ses.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'fullscreen'))
+  ses.setPermissionCheckHandler((_wc, permission) => permission === 'fullscreen')
+}
+
+/** Guard every <webview>: top-level navigation must stay on vetted domains. */
+export function guardWebview(contents: Electron.WebContents) {
+  contents.setWindowOpenHandler(({ url }) => {
+    broadcast('stream:blocked', { kind: 'popup', detail: hostOf(url) || url })
+    return { action: 'deny' }
+  })
+  const guard = (event: Electron.Event, url: string, isMainFrame = true) => {
+    if (!isMainFrame || !engine) return
+    if (!engine.isAllowedNavigation(url)) {
+      event.preventDefault()
+      broadcast('stream:blocked', { kind: 'navigation', detail: hostOf(url) || url })
+    }
+  }
+  contents.on('will-navigate', (e, url) => guard(e, url))
+  contents.on('will-redirect', (e, url, _inPlace, isMainFrame) => guard(e, url, isMainFrame))
+}
+
+function streamWebview(wcId: number): Electron.WebContents | null {
+  const wc = webContents.fromId(wcId)
+  if (!wc || wc.isDestroyed() || wc.getType() !== 'webview' || wc.session !== session.fromPartition(STREAM_PARTITION)) return null
+  return wc
+}
+
+/** Run `script` in the first frame of the player webview that has a <video>
+ *  (players usually live in cross-origin iframes the renderer can't reach). */
+async function inVideoFrame<T>(wcId: number, script: string): Promise<T | null> {
+  const wc = streamWebview(wcId)
+  if (!wc) return null
+  // Only committed, live http(s) frames — scripting a frame that's mid-navigation or detached is unsafe.
+  const frames = [wc.mainFrame, ...wc.mainFrame.framesInSubtree.filter(f => f !== wc.mainFrame)]
+    .filter(f => !(f as any).detached && /^https?:/.test(f.url))
+  const timed = <R>(p: Promise<R>) => Promise.race([p, new Promise<null>(r => setTimeout(() => r(null), 3000))])
+  for (const f of frames) {
+    try {
+      // Install the controller lazily if the preload didn't run in this frame.
+      const has = await timed(f.executeJavaScript(
+        `(() => { if (!document.querySelector('video')) return false; if (!window.__senpai) { ${PLAYER_HOOK_SOURCE} } return !!window.__senpai })()`))
+      if (!has) continue
+      const r = await timed(f.executeJavaScript(script))
+      if (r !== null && r !== undefined) return r as T
+    } catch { /* frame gone or detached */ }
+  }
+  return null
+}
+
+type PlayerCommand =
+  | { type: 'state'; prefs?: { rate?: number; mode?: 'max' | 'auto'; subs?: { on?: boolean; lang?: string }; audio?: 'sub' | 'dub' } }
+  | { type: 'rate'; rate: number }
+  | { type: 'quality'; mode: 'max' | 'auto' | 'manual'; index?: number }
+  | { type: 'seek'; time: number }
+
+function playerScript(cmd: PlayerCommand): string | null {
+  switch (cmd?.type) {
+    case 'state': {
+      const rate = Number(cmd.prefs?.rate)
+      const lang = String(cmd.prefs?.subs?.lang ?? 'en').replace(/[^\w -]/g, '').slice(0, 20) || 'en'
+      const prefs = {
+        rate: Number.isFinite(rate) ? Math.min(4, Math.max(0.25, rate)) : 1,
+        mode: cmd.prefs?.mode === 'auto' ? 'auto' : 'max',
+        subs: { on: cmd.prefs?.subs?.on !== false, lang },
+        audio: cmd.prefs?.audio === 'dub' ? 'dub' : 'sub',
+      }
+      return `window.__senpai.state(${JSON.stringify(prefs)})`
+    }
+    case 'rate': {
+      const rate = Number(cmd.rate)
+      if (!Number.isFinite(rate)) return null
+      return `window.__senpai.setRate(${Math.min(4, Math.max(0.25, rate))})`
+    }
+    case 'quality': {
+      const mode = ['max', 'auto', 'manual'].includes(cmd.mode) ? cmd.mode : 'max'
+      const index = Math.max(0, Math.floor(Number(cmd.index) || 0))
+      return `window.__senpai.setQuality(${JSON.stringify(mode)}, ${index})`
+    }
+    case 'seek': {
+      const t = Number(cmd.time)
+      if (!Number.isFinite(t) || t < 0) return null
+      return `(() => { const v = [...document.querySelectorAll('video')].find(x => x.duration > 0); if (v) { v.currentTime = ${t}; return true } return null })()`
+    }
+  }
+  return null
+}
+
+export function registerStreamHandlers(getAppState: (key: string) => string | null, setAppState: (key: string, value: string) => void) {
+  setFetchImpl((url, init) => net.fetch(url, init as any))
+  engine = new SourceEngine({ get: getAppState, set: setAppState })
+  hardenStreamingSession()
+
+  // Background maintenance: manifest refresh, safety checks, health, discovery.
+  const tick = async () => {
+    try { await engine!.refreshManifest() } catch { /* */ }
+    try { await engine!.healthTick() } catch (e) { console.error('[sources] health tick failed', e) }
+  }
+  setTimeout(tick, 4000)
+  setInterval(tick, HEALTH_INTERVAL)
+
+  let pending: ReturnType<typeof setTimeout> | null = null
+  engine.onChange(() => {
+    if (pending) return
+    pending = setTimeout(() => { pending = null; broadcast('stream:stateChanged', null) }, 300)
+  })
+
+  const e = engine
+  ipcMain.handle('stream:resolveEpisode', (_ev, title: string, ep: number, opts?: { titleEn?: string; providerId?: string; excludeOrigins?: string[]; audio?: 'sub' | 'dub'; anilistId?: number }) =>
+    e.resolveEpisode(title, ep, opts ?? {}))
+  ipcMain.handle('stream:prefetch', (_ev, title: string, titleEn?: string) => { e.prefetch(title, titleEn).catch(() => {}) })
+  ipcMain.handle('stream:cancelPrefetch', (_ev, title: string) => e.cancelPrefetch(title))
+  ipcMain.handle('stream:learnFromUrl', (_ev, title: string, url: string, ep: number) => e.learnFromUrl(title, url, ep))
+  ipcMain.handle('stream:reportFailure', (_ev, url: string, reason: string) => e.reportFailure(url, reason))
+  ipcMain.handle('stream:clearCache', (_ev, title?: string) => e.clearCache(title))
+  ipcMain.handle('stream:getSkipTimes', (_ev, malId: number, ep: number, duration?: number) => fetchSkipTimes(malId, ep, duration))
+
+  ipcMain.handle('stream:player', (_ev, wcId: number, cmd: PlayerCommand) => {
+    const script = playerScript(cmd)
+    return script ? inVideoFrame(Number(wcId), script) : null
+  })
+
+  // Settings
+  ipcMain.handle('sources:snapshot', () => e.snapshot())
+  ipcMain.handle('sources:refreshManifest', () => e.refreshManifest(true))
+  ipcMain.handle('sources:discover', async (_ev, providerId?: string) => {
+    const ids = providerId ? [providerId] : e.providers().map(p => p.id)
+    const found = (await Promise.all(ids.map(id => e.discover(id)))).flat()
+    return { found }
+  })
+  ipcMain.handle('sources:recheck', async (_ev, origin?: string) => {
+    const origins = origin ? [origin] : Object.keys(e.state.domains).filter(o => !e.state.domains[o].removed)
+    await Promise.all(origins.map(o => e.ensureSafety(o, true)))
+    await e.healthTick()
+  })
+  ipcMain.handle('sources:approve', (_ev, origin: string, approved: boolean) => e.approveDomain(origin, approved))
+  ipcMain.handle('sources:removeDomain', (_ev, origin: string) => e.removeDomain(origin))
+  ipcMain.handle('sources:addDomain', (_ev, providerId: string, url: string) => e.addUserDomain(providerId, url))
+  ipcMain.handle('sources:addProvider', (_ev, input) => e.addCustomProvider(input))
+  ipcMain.handle('sources:addSiteByLink', (_ev, url: string) => e.addSiteByLink(String(url)))
+  ipcMain.handle('sources:testSearch', (_ev, id: string, title: string) => e.testSearch(String(id), String(title)))
+  ipcMain.handle('stream:episodeCount', (_ev, title: string, audio: 'sub' | 'dub', opts?: { titleEn?: string; anilistId?: number }) =>
+    e.episodeCount(String(title), audio === 'dub' ? 'dub' : 'sub', opts ?? {}))
+  ipcMain.handle('stream:useLink', (_ev, title: string, url: string, ep: number) => e.useLink(String(title), String(url), Number(ep)))
+  ipcMain.handle('sources:removeProvider', (_ev, id: string) => e.removeCustomProvider(id))
+  ipcMain.handle('sources:setProvider', (_ev, id: string, pref: { enabled?: boolean }) => e.setProviderPref(id, pref))
+  ipcMain.handle('sources:moveProvider', (_ev, id: string, dir: -1 | 1) => e.moveProvider(id, dir))
+  ipcMain.handle('sources:setOptions', (_ev, opts) => e.setOptions(opts))
+}
+
+export function flushStreamState() { engine?.flush() }

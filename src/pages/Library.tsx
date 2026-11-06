@@ -8,7 +8,10 @@ import StatusBadge from '@/components/StatusBadge'
 import ProgressBar from '@/components/ProgressBar'
 import { SkeletonGrid } from '@/components/Skeleton'
 import EmptyState from '@/components/EmptyState'
+import FilterSelects from '@/components/FilterSelects'
+import { useDubs } from '@/hooks/useDubs'
 import type { MyStatus, Anime } from '@/types'
+import { displayTitle } from '@/lib/title'
 
 type SortKey = 'last_updated' | 'title' | 'score' | 'progress'
 type ViewMode = 'grid' | 'list'
@@ -51,6 +54,9 @@ export default function Library() {
   const [genreFilter, setGenreFilter] = useState('')
   const [formatFilter, setFormatFilter] = useState('')
   const [yearFilter, setYearFilter] = useState('')
+  const [audioFilter, setAudioFilter] = useState<'' | 'dub' | 'dub_complete' | 'sub_only'>('')
+  const [airingFilter, setAiringFilter] = useState<'' | 'RELEASING' | 'FINISHED'>('')
+  const dubOf = useDubs()
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: entries.length }
@@ -86,7 +92,7 @@ export default function Library() {
     if (search.trim()) {
       const q = search.toLowerCase()
       items = items.filter(e =>
-        e.title.toLowerCase().includes(q) ||
+        e.title.toLowerCase().includes(q) || (e.title_en ?? '').toLowerCase().includes(q) ||
         e.title_en?.toLowerCase().includes(q) ||
         e.title_jp?.toLowerCase().includes(q)
       )
@@ -99,15 +105,20 @@ export default function Library() {
     }
     if (formatFilter) items = items.filter(e => e.format === formatFilter)
     if (yearFilter) items = items.filter(e => e.season_year === Number(yearFilter))
+    if (audioFilter) items = items.filter(e => {
+      const d = dubOf(e.mal_id, e.airing_status)
+      return audioFilter === 'dub' ? d === 'complete' || d === 'ongoing' : audioFilter === 'dub_complete' ? d === 'complete' : d !== 'complete' && d !== 'ongoing'
+    })
+    if (airingFilter) items = items.filter(e => e.airing_status === airingFilter)
     const sorted = [...items]
     switch (sortKey) {
-      case 'title': sorted.sort((a, b) => a.title.localeCompare(b.title)); break
+      case 'title': sorted.sort((a, b) => displayTitle(a).localeCompare(displayTitle(b))); break
       case 'score': sorted.sort((a, b) => (b.entry.my_score ?? 0) - (a.entry.my_score ?? 0)); break
       case 'progress': sorted.sort((a, b) => b.entry.progress - a.entry.progress); break
       default: sorted.sort((a, b) => (b.entry.last_watched_at ?? '').localeCompare(a.entry.last_watched_at ?? ''))
     }
     return sorted
-  }, [entries, statusFilter, sortKey, search, genreFilter, formatFilter, yearFilter])
+  }, [entries, statusFilter, sortKey, search, genreFilter, formatFilter, yearFilter, audioFilter, airingFilter, dubOf])
 
   const toggleSelect = (id: number) => {
     setSelected(prev => {
@@ -138,13 +149,13 @@ export default function Library() {
       progress: anime.episodes_total ?? anime.entry.progress,
       finished_at: now,
     })
-    toast(`${anime.title} marked completed`)
+    toast(`${displayTitle(anime)} marked completed`)
     setMenuOpen(null)
   }
 
   const handleRemove = async (anime: Anime) => {
     await deleteEntry(anime.id)
-    toast(`${anime.title} removed`)
+    toast(`${displayTitle(anime)} removed`)
     setMenuOpen(null)
   }
 
@@ -154,7 +165,7 @@ export default function Library() {
       const media = await getAnimeByMalId(anime.mal_id)
       const mapped = mapAniListToAnime(media)
       await window.api.db.upsertAnime({ ...mapped, mal_id: anime.mal_id })
-      toast(`Enriched "${anime.title}"`)
+      toast(`Enriched "${displayTitle(anime)}"`)
       refresh()
     } catch {
       toast('Could not find on AniList')
@@ -167,26 +178,25 @@ export default function Library() {
     navigate(`/anime/${anime.id}`)
   }
 
-  if (loading) return <div className="p-6"><SkeletonGrid /></div>
+  if (loading) return <div><SkeletonGrid /></div>
 
   return (
     <div className="flex flex-col h-full">
-      {/* Top bar */}
-      <div className="space-y-3 border-b border-border bg-bg-0 px-6 pt-4 pb-3 sticky top-0 z-10">
-        {/* Status tabs */}
-        <div className="flex items-center gap-1 overflow-x-auto">
+      {/* Header + tabs */}
+      <div className="sticky top-[60px] z-20 -mx-4 space-y-4 bg-bg-0/95 px-4 pt-2 pb-3 backdrop-blur lg:-mx-10 lg:px-10">
+        <h1 className="font-display text-3xl font-black text-text-1">My Lists</h1>
+        <div className="flex items-center gap-6 overflow-x-auto border-b border-border">
           {STATUS_TABS.map(tab => (
             <button
               key={tab.value}
-              onClick={() => setStatusFilter(tab.value)}
-              className={`whitespace-nowrap rounded-full px-3 py-1 text-sm transition-colors ${
-                statusFilter === tab.value
-                  ? 'bg-accent text-text-1'
-                  : 'text-text-2 hover:bg-bg-1'
+              onClick={() => { setStatusFilter(tab.value); navigate(tab.value === 'all' ? '/library' : `/library?status=${tab.value}`, { replace: true }) }}
+              className={`relative whitespace-nowrap pb-3 text-sm font-bold uppercase tracking-wide transition-colors
+                after:absolute after:inset-x-0 after:bottom-0 after:h-[3px] after:rounded-full ${
+                statusFilter === tab.value ? 'text-text-1 after:bg-accent' : 'text-text-3 hover:text-text-1 after:bg-transparent'
               }`}
             >
-              {tab.label}
-              <span className="ml-1 text-xs opacity-70">{statusCounts[tab.value] || 0}</span>
+              {tab.value === 'plan_to_watch' ? 'Watchlist' : tab.label}
+              <span className="ml-1.5 font-mono text-xs font-normal opacity-60">{statusCounts[tab.value] || 0}</span>
             </button>
           ))}
         </div>
@@ -219,6 +229,7 @@ export default function Library() {
             <option value="">Year</option>
             {allYears.map(y => <option key={y} value={String(y)}>{y}</option>)}
           </select>
+          <FilterSelects audio={audioFilter} setAudio={setAudioFilter} status={airingFilter} setStatus={setAiringFilter} />
           <div className="flex rounded-card border border-border overflow-hidden">
             <button
               onClick={() => setView('grid')}
@@ -248,13 +259,13 @@ export default function Library() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 pt-6">
         {filtered.length === 0 ? (
           <EmptyState title="No anime found" description={search ? 'Try a different search.' : 'Your library is empty.'} />
         ) : view === 'grid' ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map(item => (
-              <div key={item.id} className="relative">
+              <div key={item.id} className="group relative">
                 {selectMode && (
                   <div className={`absolute top-2 left-2 z-10 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${
                     selected.has(item.id) ? 'bg-accent border-accent' : 'border-white/70 bg-black/30'
@@ -271,18 +282,26 @@ export default function Library() {
                     style={item.cover_accent ? { borderBottom: `3px solid ${item.cover_accent}` } : undefined}
                   >
                     {item.cover_url ? (
-                      <img src={item.cover_url} alt={item.title} loading="lazy" className="h-full w-full object-cover" />
+                      <img src={item.cover_url} alt={displayTitle(item)} loading="lazy" className="h-full w-full object-cover" />
                     ) : (
                       <div className="flex h-full items-center justify-center p-3">
-                        <span className="text-center text-sm text-text-3">{item.title}</span>
+                        <span className="text-center text-sm text-text-3">{displayTitle(item)}</span>
                       </div>
                     )}
                   </div>
                   <div className="mt-2 space-y-1">
-                    <p className="text-sm font-medium text-text-1 line-clamp-2">{item.title}</p>
+                    <p className="text-sm font-medium text-text-1 line-clamp-2">{displayTitle(item)}</p>
                     <StatusBadge status={item.entry.my_status} />
                   </div>
                 </button>
+                {/* Quick complete (watched it elsewhere) */}
+                {!selectMode && item.entry.my_status !== 'completed' && item.airing_status !== 'RELEASING' && item.airing_status !== 'NOT_YET_RELEASED' && (
+                  <button
+                    onClick={e => { e.stopPropagation(); handleMarkCompleted(item) }}
+                    title="Mark completed"
+                    className="absolute left-2 top-2 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-status-completed opacity-0 transition-opacity hover:bg-status-completed hover:text-black group-hover:opacity-100"
+                  >✓ Completed</button>
+                )}
                 {/* Quick menu */}
                 {!selectMode && (
                   <div className="absolute top-2 right-2">
@@ -337,7 +356,7 @@ export default function Library() {
                 <div className="h-12 w-8 shrink-0 overflow-hidden rounded bg-bg-2">
                   {item.cover_url && <img src={item.cover_url} alt="" className="h-full w-full object-cover" />}
                 </div>
-                <p className="flex-1 text-sm font-medium text-text-1 line-clamp-1">{item.title}</p>
+                <p className="flex-1 text-sm font-medium text-text-1 line-clamp-1">{displayTitle(item)}</p>
                 <StatusBadge status={item.entry.my_status} />
                 <div className="w-32" onClick={e => e.stopPropagation()}>
                   <ProgressBar current={item.entry.progress} total={item.episodes_total} />

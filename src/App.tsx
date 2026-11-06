@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useState } from 'react'
 import { ToastProvider } from '@/hooks/useToast'
 import { LibraryProvider, useLibrary } from '@/hooks/useLibrary'
@@ -15,6 +15,7 @@ const Stats = lazy(() => import('@/pages/Stats'))
 const AnimeDetail = lazy(() => import('@/pages/AnimeDetail'))
 const Onboarding = lazy(() => import('@/pages/Onboarding'))
 const Seasonal = lazy(() => import('@/pages/Seasonal'))
+const BrowseAll = lazy(() => import('@/pages/BrowseAll'))
 const Settings = lazy(() => import('@/pages/Settings'))
 const Watch = lazy(() => import('@/pages/Watch'))
 const Layout = lazy(() => import('@/components/Layout'))
@@ -55,21 +56,27 @@ function AppRoutes() {
         <Route path="/for-you" element={<Suspense fallback={<LoadingFallback />}><ForYou /></Suspense>} />
         <Route path="/stats" element={<Suspense fallback={<LoadingFallback />}><Stats /></Suspense>} />
         <Route path="/seasonal" element={<Suspense fallback={<LoadingFallback />}><Seasonal /></Suspense>} />
+        <Route path="/browse" element={<Suspense fallback={<LoadingFallback />}><BrowseAll /></Suspense>} />
         <Route path="/anime/:id" element={<Suspense fallback={<LoadingFallback />}><AnimeDetail /></Suspense>} />
         <Route path="/settings" element={<Suspense fallback={<LoadingFallback />}><Settings /></Suspense>} />
       </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }
 
+// Built app is loaded from file:// where the path is the on-disk location of index.html,
+// so BrowserRouter matches no route (blank window). Use hash routing there.
+const Router = window.location.protocol === 'file:' ? HashRouter : BrowserRouter
+
 export default function App() {
   return (
-    <BrowserRouter>
+    <Router>
       <ToastProvider>
         <LibraryProvider>
           <AppRoutes />
         </LibraryProvider>
       </ToastProvider>
-    </BrowserRouter>
+    </Router>
   )
 }

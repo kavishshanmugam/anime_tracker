@@ -1,4 +1,5 @@
 import type { AniListMedia, Anime } from '@/types'
+import type { RecNode } from './recommend'
 
 const ANILIST_URL = 'https://graphql.anilist.co'
 
@@ -62,6 +63,9 @@ async function gql<T = any>(query: string, variables: Record<string, any> = {}):
   })
 }
 
+/** Raw GraphQL access (rate-limited) for modules with their own queries. */
+export const gqlRaw = <T = any>(query: string, variables: Record<string, any> = {}) => gql<T>(query, variables)
+
 const MEDIA_FIELDS = `
   id idMal
   title { romaji english native }
@@ -99,6 +103,19 @@ export async function getAnimeById(id: number): Promise<AniListMedia> {
     }
   `, { id })
   return data.Media
+}
+
+export async function getStreamingEpisodes(id: number): Promise<{ title: string; thumbnail: string }[]> {
+  const data = await gql<{ Media: { streamingEpisodes: { title: string; thumbnail: string }[] } }>(
+    `query ($id: Int) { Media(id: $id, type: ANIME) { streamingEpisodes { title thumbnail } } }`, { id })
+  return data.Media?.streamingEpisodes ?? []
+}
+
+/** Trending / popular anime for the home page hero + shelves. */
+export async function getTrendingAnime(perPage = 20): Promise<AniListMedia[]> {
+  const data = await gql<{ Page: { media: AniListMedia[] } }>(
+    `query ($perPage: Int) { Page(perPage: $perPage) { media(type: ANIME, sort: TRENDING_DESC, isAdult: false) { ${MEDIA_FIELDS} } } }`, { perPage })
+  return data.Page.media
 }
 
 export async function getAnimeByMalId(malId: number): Promise<AniListMedia> {
@@ -148,24 +165,28 @@ export async function getAnimeRelations(id: number): Promise<AniListMedia['relat
   return data.Media.relations
 }
 
-export async function getRecommendations(id: number): Promise<any> {
+/** AniList "users who liked this also liked" recommendations, with enough detail to rank and display them. */
+export async function getRecommendations(id: number): Promise<RecNode[]> {
   const data = await gql(`
     query ($id: Int) {
       Media(id: $id, type: ANIME) {
         recommendations(perPage: 25, sort: RATING_DESC) {
           nodes {
+            rating
             mediaRecommendation {
-              id title { romaji } coverImage { large } meanScore
-              genres format
+              id idMal title { romaji english } coverImage { large extraLarge } bannerImage
+              description(asHtml: false) meanScore popularity genres tags { name rank }
+              format status episodes seasonYear isAdult
               relations { edges { relationType node { id } } }
             }
-            rating
           }
         }
       }
     }
   `, { id })
-  return data.Media.recommendations
+  return (data.Media?.recommendations?.nodes ?? [])
+    .filter((n: any) => n.mediaRecommendation && !n.mediaRecommendation.isAdult)
+    .map((n: any) => ({ rating: n.rating ?? 0, media: n.mediaRecommendation }))
 }
 
 // ponytail: fetch a user's public anime list by username

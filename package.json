@@ -8,7 +8,9 @@
     "build": "vite build",
     "prepackage": "node build/fix-cache.js",
     "package": "npm run build && electron-builder --win nsis",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:upnext": "esbuild scripts/test-upnext.ts --bundle --platform=node --format=cjs --outfile=dist-test/test-upnext.cjs --log-level=warning && node dist-test/test-upnext.cjs",
+    "test:sources": "esbuild scripts/test-sources.ts --bundle --platform=node --format=cjs --outfile=dist-test/test-sources.cjs --log-level=warning && node dist-test/test-sources.cjs"
   },
   "dependencies": {
     "colorthief": "^2.4.0",

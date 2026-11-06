@@ -396,7 +396,8 @@ export function registerAllHandlers(ipcMain: IpcMain): void {
   })
 
   ipcMain.handle('db:getNotInterested', () => {
-    return query('SELECT anime_id FROM not_interested').map(r => r.anime_id)
+    // AniList ids (what recommendations are keyed by), not local row ids.
+    return query('SELECT a.anilist_id AS id FROM not_interested n JOIN anime a ON a.id = n.anime_id WHERE a.anilist_id IS NOT NULL').map(r => r.id)
   })
 
   ipcMain.handle('db:exportData', () => {
