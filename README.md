@@ -26,36 +26,73 @@ A local-first desktop app that tracks your anime watching, syncs airing schedule
 
 ### Option A: Use the pre-built installer (recommended)
 
-If someone has already built the installer for you:
+1. Copy **`Senpai Setup X.X.X.exe`** to the PC (from `release\` after a build, or wherever it was shared).
+2. Double-click it.
+3. Windows shows **"Windows protected your PC"** because the installer isn't code-signed — click **More info → Run anyway**.
+4. Follow the prompts. Senpai appears in the **Start Menu**.
 
-1. Double-click **`Senpai Setup X.X.X.exe`**
-2. Follow the prompts
-3. Done — Senpai is in your Start Menu
-
-No Node.js or anything else needed.
+No Node.js or anything else is needed on that PC.
 
 ### Option B: Build the installer yourself
 
 Requires **Node.js** v18+ ([nodejs.org](https://nodejs.org/), LTS recommended) and **Windows 10/11**.
 
-1. Double-click **`INSTALL.bat`**
-2. Wait for dependencies + build (~2-5 min on first run)
-3. The installer opens automatically — click through to install
-4. Done — delete the project folder if you want
+1. Get the latest code: `git pull` (or download the repo).
+2. Double-click **`INSTALL.bat`** — it installs dependencies, builds `release\Senpai Setup X.X.X.exe` (~3–5 min first time) and opens it.
+3. Click through the installer.
 
-The built installer (`release/Senpai Setup X.X.X.exe`) can be copied to any other PC and run without Node.js.
+No Developer Mode or admin rights needed (see `build/fix-cache.js`). The built `.exe` can be copied to any other PC.
 
-Senpai installs to `%LOCALAPPDATA%\Programs\Senpai\` and appears in the **Start Menu**.
+Senpai installs to `%LOCALAPPDATA%\Programs\Senpai\` (per-user, no admin).
+
+### Updating to a new version
+
+1. **Export a backup first** (Settings → Library & Data → Export JSON) — just in case.
+2. Close Senpai.
+3. Run the new `Senpai Setup X.X.X.exe`. It installs over the old version and **keeps your library, settings and sources**.
+
+## First-time setup
+
+1. **Bring your list** — on first launch choose *Import from MyAnimeList* (XML export) or go to
+   **Settings → Library & Data** and import from MAL, AniList (username) or a Senpai JSON backup.
+   Or skip and add shows from Home / Browse as you go.
+2. **Streaming sources** — **Settings → Sources**. 9anime, AnimeSuge and 4anime are built in and are checked by the
+   security gate automatically on startup. Domains marked *awaiting approval* need you to click **Approve**
+   (click the domain name to open it in your browser first). To add a site you trust, paste any link from it into
+   **Add a site you trust**. See [Streaming Sources](#streaming-sources) for how this works.
+3. **Playback preferences** — **Settings → Playback**: default Sub/Dub, subtitles (English/Off), autoplay next episode,
+   auto-skip intro, and any paid services you subscribe to (episodes then open there instead).
+4. **Sync with AniList / MyAnimeList (optional)** — **Settings → Accounts**. One-time, ~1 minute per service:
+   - **AniList:** anilist.co → Settings → Developer → *Create New Client*. Redirect URL:
+     `https://anilist.co/api/v2/oauth/pin`. Copy the **Client ID** into Senpai and click **Connect**.
+   - **MyAnimeList:** myanimelist.net → Account Settings → API → *Create ID*. App type **other**, Redirect URL:
+     `http://localhost:52713/senpai-mal-callback`. Copy the **Client ID** into Senpai and click **Connect**.
+   - Sign-in happens on the official site in a pop-up. After that every status/progress/score/date change syncs
+     automatically; **Sync whole library now** pushes everything once.
+5. **Watch something** — open a show and press **Start watching** / **Continue**. On the player, the **⚙** button
+   (bottom-right of the video, appears when you move the mouse) has speed, quality, subtitles, Sub/Dub, autoplay and
+   auto-skip. If an episode can't be found automatically, use **Source → Paste a link** or pick the show on the
+   site's search page once — Senpai remembers it for later episodes.
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| "Couldn't find this episode" | Settings → Sources: approve a pending domain or add a site you trust; or **Paste a link** in the player |
+| Domain shows *unreachable* | The site is down or blocked by your network/ISP — it's retried hourly; try another source |
+| Video won't start | Click play inside the video — sites usually need one click before playback starts |
+| A site shows a "Just a moment…" check | Complete it in the player once; it's the site's bot protection |
+| Episode list looks short for dub | Only episodes that are actually dubbed/aired are shown |
 
 ## Uninstall
 
 Uninstall from **Windows Settings > Apps > Senpai** like any other program.
-This removes the app and all its data (database, backups, settings).
+This removes the app **and all its data** (database, backups, settings) — export a backup first if you want to keep your list.
 
 ## Data
 
 Your database is stored at `%APPDATA%\senpai\` and is automatically backed up on every launch (keeps last 5).
-Export anytime from Settings as JSON.
+Export anytime from **Settings → Library & Data** as JSON (or MAL XML).
 
 ## Importing from MyAnimeList
 
