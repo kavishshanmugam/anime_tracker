@@ -9,6 +9,9 @@ export interface ParsedMALEntry {
   progress: number
   startDate: string | null
   finishDate: string | null
+  /** Total episodes per MAL (0 = unknown). */
+  episodes: number
+  timesWatched: number
 }
 
 export interface MALImportResult {
@@ -17,18 +20,23 @@ export interface MALImportResult {
   entries: ParsedMALEntry[]
 }
 
-const MAL_STATUS_MAP: Record<number, MyStatus> = {
-  1: 'watching',
-  2: 'completed',
-  3: 'on_hold',
-  4: 'dropped',
-  5: 'watching', // re-watching → treat as watching
-  6: 'plan_to_watch',
+// MAL's XML export writes the status as text ("Completed", "Plan to Watch");
+// older exports / other tools use the numeric codes. Accept both.
+const MAL_STATUS_MAP: Record<string, MyStatus> = {
+  '1': 'watching', watching: 'watching',
+  '2': 'completed', completed: 'completed',
+  '3': 'on_hold', onhold: 'on_hold',
+  '4': 'dropped', dropped: 'dropped',
+  '5': 'watching', rewatching: 'watching',
+  '6': 'plan_to_watch', plantowatch: 'plan_to_watch',
 }
+const statusOf = (raw: unknown): MyStatus | undefined =>
+  MAL_STATUS_MAP[String(raw ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')]
 
 function parseDate(d: string | undefined | null): string | null {
-  if (!d || d === '0000-00-00' || d === 'null') return null
-  return d
+  const s = String(d ?? '')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || s.startsWith('0000')) return null
+  return s
 }
 
 export function parseMALExport(xmlString: string): MALImportResult {
@@ -45,19 +53,21 @@ export function parseMALExport(xmlString: string): MALImportResult {
   const entries: ParsedMALEntry[] = []
 
   for (const item of list) {
-    const statusNum = Number(item.my_status)
-    const status = MAL_STATUS_MAP[statusNum]
-    if (!status) continue // skip unknown statuses
+    const status = statusOf(item.my_status)
+    const malId = Number(item.series_animedb_id)
+    if (!status || !malId) continue // skip unknown statuses / broken rows
 
     byStatus[status]++
     entries.push({
-      malId: Number(item.series_animedb_id),
+      malId,
       title: String(item.series_title ?? ''),
       status,
       score: Number(item.my_score ?? 0),
       progress: Number(item.my_watched_episodes ?? 0),
       startDate: parseDate(item.my_start_date),
       finishDate: parseDate(item.my_finish_date),
+      episodes: Number(item.series_episodes) || 0,
+      timesWatched: Number(item.my_times_watched) || 0,
     })
   }
 

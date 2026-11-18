@@ -113,13 +113,15 @@ export default function Settings() {
     let count = 0
 
     for (const entry of malResult.entries) {
-      const animeId = await window.api.db.upsertAnime({
+      // Already known (e.g. re-import): keep its fetched covers/details, only update your list entry.
+      const existing = await window.api.db.getAnimeByMalId(entry.malId)
+      const animeId = existing?.id ?? await window.api.db.upsertAnime({
         mal_id: entry.malId,
         anilist_id: null,
         title: entry.title,
         title_en: null, title_jp: null,
         cover_url: null, banner_url: null, cover_accent: null,
-        episodes_total: null, airing_status: null,
+        episodes_total: entry.episodes || null, airing_status: null,
         season: null, season_year: null, studio: null,
         genres: null, tags: null, synopsis: null,
         mean_score: null, format: null, source: null,
@@ -131,7 +133,7 @@ export default function Settings() {
         my_status: entry.status,
         my_score: entry.score || null,
         progress: entry.progress,
-        rewatch_count: 0,
+        rewatch_count: entry.timesWatched,
         started_at: entry.startDate,
         finished_at: entry.finishDate,
         source: 'mal_import',

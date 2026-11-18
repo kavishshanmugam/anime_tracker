@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { computeUpNext } from '../src/lib/upnext'
 import { dubStatus, dubChanges, loadDubs } from '../src/lib/dubs'
 import { progressAfterWatching } from '../src/lib/progress'
+import { parseMALExport } from '../src/lib/mal-import'
 import { tasteWeight, rankRecommendations, type RecNode } from '../src/lib/recommend'
 import { dubStatus, dubChanges, loadDubs } from '../src/lib/dubs'
 import type { AnimeWithEntry } from '../src/types'
@@ -108,6 +109,29 @@ console.log('\n[Progress]')
   })
   test('unknown episode count (still airing) never auto-completes', () => {
     assert.equal(progressAfterWatching({ entry: watching(30), episode: 31, episodesTotal: null, now: t })!.my_status, undefined)
+  })
+}
+
+// ---------- MAL import ----------
+console.log('\n[MAL import]')
+{
+  const row = (id: number, status: string, extra = '') => `<anime><series_animedb_id>${id}</series_animedb_id><series_title><![CDATA[Show ${id}]]></series_title>
+    <series_episodes>12</series_episodes><my_watched_episodes>12</my_watched_episodes><my_start_date>0000-00-00</my_start_date>
+    <my_finish_date>2024-03-01</my_finish_date><my_score>8</my_score><my_status>${status}</my_status><my_times_watched>2</my_times_watched>${extra}</anime>`
+  const xml = `<?xml version="1.0" encoding="UTF-8" ?><myanimelist><myinfo><user_name>x</user_name></myinfo>
+    ${row(1, 'Completed')}${row(2, 'Plan to Watch')}${row(3, 'Watching')}${row(4, 'On-Hold')}${row(5, 'Dropped')}${row(6, '2')}${row(7, 'Nonsense')}</myanimelist>`
+  const r = parseMALExport(xml)
+  test('text statuses (what MAL actually exports) and numeric codes are both understood', () => {
+    assert.equal(r.total, 6)
+    assert.deepEqual(r.entries.map(e => e.status), ['completed', 'plan_to_watch', 'watching', 'on_hold', 'dropped', 'completed'])
+  })
+  test('episodes, rewatches, score and dates come through; 0000-00-00 is no date', () => {
+    const e = r.entries[0]
+    assert.equal(e.episodes, 12); assert.equal(e.timesWatched, 2); assert.equal(e.score, 8)
+    assert.equal(e.startDate, null); assert.equal(e.finishDate, '2024-03-01')
+  })
+  test('single-entry export still parses', () => {
+    assert.equal(parseMALExport(`<myanimelist>${row(9, 'Completed')}</myanimelist>`).total, 1)
   })
 }
 
