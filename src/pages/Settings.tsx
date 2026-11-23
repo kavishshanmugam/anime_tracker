@@ -101,10 +101,13 @@ export default function Settings() {
 
   const handleMALSelect = async () => {
     if (!window.api) return
-    const path = await window.api.fs.selectFile([{ name: 'XML Files', extensions: ['xml'] }])
+    const path = await window.api.fs.selectFile([{ name: 'MyAnimeList export (.xml, .xml.gz)', extensions: ['xml', 'gz'] }, { name: 'All Files', extensions: ['*'] }])
     if (!path) return
-    const content = await window.api.fs.readFile(path)
-    setMalResult(parseMALExport(content))
+    try {
+      const result = parseMALExport(await window.api.fs.readFile(path))
+      if (!result.total) { toast("No anime found in that file — pick the animelist_….xml (or .xml.gz) file MyAnimeList gave you"); return }
+      setMalResult(result)
+    } catch { toast('Could not read that file') }
   }
 
   const handleMALImport = async () => {

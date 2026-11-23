@@ -70,8 +70,9 @@ export default function Library() {
   const allGenres = useMemo(() => {
     const set = new Set<string>()
     for (const e of entries) {
-      if (!e.genres) continue
-      try { for (const g of JSON.parse(e.genres)) set.add(g) } catch {}
+      try { for (const g of JSON.parse(e.genres ?? '[]')) set.add(g) } catch {}
+      // "Isekai" is a tag on AniList, not a genre — offer it as one.
+      try { if (JSON.parse(e.tags ?? '[]').includes('Isekai')) set.add('Isekai') } catch {}
     }
     return [...set].sort()
   }, [entries])
@@ -101,8 +102,7 @@ export default function Library() {
     }
     if (genreFilter) {
       items = items.filter(e => {
-        if (!e.genres) return false
-        try { return JSON.parse(e.genres).includes(genreFilter) } catch { return false }
+        try { return JSON.parse(e.genres ?? '[]').includes(genreFilter) || JSON.parse(e.tags ?? '[]').includes(genreFilter) } catch { return false }
       })
     }
     if (formatFilter) items = items.filter(e => e.format === formatFilter)

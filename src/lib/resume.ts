@@ -36,7 +36,8 @@ export function getResume(animeId: number, ep: number): ResumePos | undefined {
 
 export function setResume(animeId: number, ep: number, t: number, d: number) {
   if (!map || !Number.isFinite(t) || !Number.isFinite(d) || d <= 0) return
-  if (t < 30 || d - t < 60) { if (map[k(animeId, ep)]) { delete map[k(animeId, ep)]; persist() } return }
+  if (t < 30) return // nothing worth resuming yet — keep whatever is saved
+  if (d - t < 60) { if (map[k(animeId, ep)]) { delete map[k(animeId, ep)]; persist() } return }
   map[k(animeId, ep)] = { t: Math.round(t), d: Math.round(d), at: Date.now() }
   persist()
 }

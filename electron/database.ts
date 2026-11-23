@@ -2,6 +2,7 @@ import type { IpcMain } from 'electron'
 import { app, dialog } from 'electron'
 import fs from 'fs'
 import initSqlJs, { type Database } from 'sql.js'
+import zlib from 'node:zlib'
 
 let db: Database
 
@@ -555,7 +556,10 @@ export function registerAllHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle('fs:readFile', (_e, filePath: string) => {
     try {
-      return fs.readFileSync(filePath, 'utf-8')
+      const buf = fs.readFileSync(filePath)
+      // MAL exports download as .xml.gz — unzip transparently (gzip magic bytes 1f 8b).
+      if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) return zlib.gunzipSync(buf).toString('utf-8')
+      return buf.toString('utf-8')
     } catch (e: any) {
       throw new Error(`Failed to read file: ${e.message}`)
     }

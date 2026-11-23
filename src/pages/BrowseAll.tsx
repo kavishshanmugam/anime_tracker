@@ -12,6 +12,12 @@ import { ensureLocal } from '@/lib/watch'
 
 const GENRES = ['Action', 'Adventure', 'Comedy', 'Drama', 'Ecchi', 'Fantasy', 'Horror', 'Mahou Shoujo', 'Mecha', 'Music',
   'Mystery', 'Psychological', 'Romance', 'Sci-Fi', 'Slice of Life', 'Sports', 'Supernatural', 'Thriller']
+// AniList files these under tags rather than genres; they're offered in the same dropdown.
+const THEMES = ['Isekai', 'Reincarnation', 'Time Travel', 'School', 'Military', 'Super Power', 'Video Games', 'Harem', 'Shounen', 'Seinen']
+
+// Results per filter set, kept for the session so Back returns to the same list (incl. everything you loaded).
+const resultCache = new Map<string, { items: any[]; page: number; hasNext: boolean; total: number | null }>()
+
 const FORMATS: [string, string][] = [['TV', 'TV series'], ['MOVIE', 'Movie'], ['ONA', 'ONA'], ['OVA', 'OVA'], ['SPECIAL', 'Special'], ['TV_SHORT', 'TV short']]
 const SORTS: [string, string][] = [['POPULARITY_DESC', 'Most popular'], ['SCORE_DESC', 'Highest rated'], ['TRENDING_DESC', 'Trending'], ['START_DATE_DESC', 'Newest'], ['TITLE_ROMAJI', 'A–Z']]
 
@@ -22,11 +28,11 @@ interface Media {
 }
 
 const QUERY = `query ($page: Int, $search: String, $genre: String, $format: MediaFormat, $status: MediaStatus, $year: Int,
-  $sort: [MediaSort], $malIn: [Int], $malNotIn: [Int]) {
+  $sort: [MediaSort], $malIn: [Int], $malNotIn: [Int], $tag: String) {
   Page(page: $page, perPage: 30) {
     pageInfo { hasNextPage total }
     media(type: ANIME, isAdult: false, search: $search, genre: $genre, format: $format, status: $status, seasonYear: $year,
-      sort: $sort, idMal_in: $malIn, idMal_not_in: $malNotIn) {
+      sort: $sort, idMal_in: $malIn, idMal_not_in: $malNotIn, tag: $tag) {
       id idMal title { romaji english } coverImage { large extraLarge } description meanScore genres format status episodes seasonYear
     }
   }
@@ -39,11 +45,13 @@ export default function BrowseAll() {
   const { entries, refresh } = useLibrary()
   const dubOf = useDubs()
   const [params, setParams] = useSearchParams()
-  const [items, setItems] = useState<Media[]>([])
-  const [page, setPage] = useState(1)
-  const [hasNext, setHasNext] = useState(false)
-  const [total, setTotal] = useState<number | null>(null)
-  const [loading, setLoading] = useState(true)
+  const cacheKey = params.toString()
+  const cached = resultCache.get(cacheKey)
+  const [items, setItems] = useState<Media[]>(cached?.items ?? [])
+  const [page, setPage] = useState(cached?.page ?? 1)
+  const [hasNext, setHasNext] = useState(cached?.hasNext ?? false)
+  const [total, setTotal] = useState<number | null>(cached?.total ?? null)
+  const [loading, setLoading] = useState(!cached)
   const [searchInput, setSearchInput] = useState(params.get('q') ?? '')
   const reqRef = useRef(0)
 
@@ -71,11 +79,16 @@ export default function BrowseAll() {
         else if (f.audio === 'sub_only') malNotIn = dubbed
       }
       const data = await gqlRaw<{ Page: { pageInfo: { hasNextPage: boolean; total: number }; media: Media[] } }>(QUERY, {
-        page: p, search: f.q || undefined, genre: f.genre || undefined, format: f.format || undefined, status,
+        page: p, search: f.q || undefined, genre: f.genre && !THEMES.includes(f.genre) ? f.genre : undefined,
+        tag: THEMES.includes(f.genre) ? f.genre : undefined, format: f.format || undefined, status,
         year: f.year ? Number(f.year) : undefined, sort: f.q ? ['SEARCH_MATCH', f.sort] : [f.sort], malIn, malNotIn,
       })
       if (id !== reqRef.current) return
-      setItems(prev => p === 1 ? data.Page.media : [...prev, ...data.Page.media])
+      setItems(prev => {
+        const next = p === 1 ? data.Page.media : [...prev, ...data.Page.media]
+        resultCache.set(cacheKey, { items: next, page: p, hasNext: data.Page.pageInfo.hasNextPage, total: data.Page.pageInfo.total })
+        return next
+      })
       setHasNext(data.Page.pageInfo.hasNextPage)
       setTotal(data.Page.pageInfo.total)
       setPage(p)
@@ -86,7 +99,12 @@ export default function BrowseAll() {
     }
   }, [f.q, f.audio, f.status, f.genre, f.format, f.year, f.sort]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { fetchPage(1) }, [fetchPage])
+  // Fresh filters → fetch; coming Back to the same filters → reuse what was already loaded.
+  useEffect(() => {
+    const hit = resultCache.get(cacheKey)
+    if (hit) { reqRef.current++; setItems(hit.items); setPage(hit.page); setHasNext(hit.hasNext); setTotal(hit.total); setLoading(false) }
+    else fetchPage(1)
+  }, [fetchPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced search box.
   useEffect(() => {
@@ -133,7 +151,8 @@ export default function BrowseAll() {
           </select>
           <select value={f.genre} onChange={e => set('genre', e.target.value)} className={sel}>
             <option value="">Any genre</option>
-            {GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+            <optgroup label="Genres">{GENRES.map(g => <option key={g} value={g}>{g}</option>)}</optgroup>
+            <optgroup label="Themes">{THEMES.map(g => <option key={g} value={g}>{g}</option>)}</optgroup>
           </select>
           <select value={f.format} onChange={e => set('format', e.target.value)} className={sel}>
             <option value="">Any format</option>

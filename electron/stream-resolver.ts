@@ -86,7 +86,7 @@ function streamWebview(wcId: number): Electron.WebContents | null {
 
 /** Run `script` in the first frame of the player webview that has a <video>
  *  (players usually live in cross-origin iframes the renderer can't reach). */
-async function inVideoFrame<T>(wcId: number, script: string): Promise<T | null> {
+async function inVideoFrame<T>(wcId: number, script: string, userGesture = false): Promise<T | null> {
   const wc = streamWebview(wcId)
   if (!wc) return null
   // Only committed, live http(s) frames — scripting a frame that's mid-navigation or detached is unsafe.
@@ -99,7 +99,7 @@ async function inVideoFrame<T>(wcId: number, script: string): Promise<T | null> 
       const has = await timed(f.executeJavaScript(
         `(() => { if (!document.querySelector('video')) return false; if (!window.__senpai) { ${PLAYER_HOOK_SOURCE} } return !!window.__senpai })()`))
       if (!has) continue
-      const r = await timed(f.executeJavaScript(script))
+      const r = await timed(f.executeJavaScript(script, userGesture))
       if (r !== null && r !== undefined) return r as T
     } catch { /* frame gone or detached */ }
   }
@@ -111,6 +111,7 @@ type PlayerCommand =
   | { type: 'rate'; rate: number }
   | { type: 'quality'; mode: 'max' | 'auto' | 'manual'; index?: number }
   | { type: 'seek'; time: number }
+  | { type: 'fullscreen' }
 
 function playerScript(cmd: PlayerCommand): string | null {
   switch (cmd?.type) {
@@ -139,8 +140,9 @@ function playerScript(cmd: PlayerCommand): string | null {
     case 'seek': {
       const t = Number(cmd.time)
       if (!Number.isFinite(t) || t < 0) return null
-      return `(() => { const v = [...document.querySelectorAll('video')].find(x => x.duration > 0); if (v) { v.currentTime = ${t}; return true } return null })()`
+      return `window.__senpai.seek(${t})`
     }
+    case 'fullscreen': return `window.__senpai.fullscreen()`
   }
   return null
 }
@@ -176,7 +178,8 @@ export function registerStreamHandlers(getAppState: (key: string) => string | nu
 
   ipcMain.handle('stream:player', (_ev, wcId: number, cmd: PlayerCommand) => {
     const script = playerScript(cmd)
-    return script ? inVideoFrame(Number(wcId), script) : null
+    // Only fullscreen (needs activation) and seek (may start playback) run as a user gesture — never the state poll.
+    return script ? inVideoFrame(Number(wcId), script, cmd?.type === 'fullscreen' || cmd?.type === 'seek') : null
   })
 
   // Settings
@@ -200,7 +203,8 @@ export function registerStreamHandlers(getAppState: (key: string) => string | nu
   ipcMain.handle('sources:testSearch', (_ev, id: string, title: string) => e.testSearch(String(id), String(title)))
   ipcMain.handle('stream:episodeCount', (_ev, title: string, audio: 'sub' | 'dub', opts?: { titleEn?: string; anilistId?: number }) =>
     e.episodeCount(String(title), audio === 'dub' ? 'dub' : 'sub', opts ?? {}))
-  ipcMain.handle('stream:useLink', (_ev, title: string, url: string, ep: number) => e.useLink(String(title), String(url), Number(ep)))
+  ipcMain.handle('stream:useLink', (_ev, title: string, url: string, ep: number, opts?: { titleEn?: string; anilistId?: number; audio?: 'sub' | 'dub' }) =>
+    e.useLink(String(title), String(url), Number(ep), opts ?? {}))
   ipcMain.handle('sources:removeProvider', (_ev, id: string) => e.removeCustomProvider(id))
   ipcMain.handle('sources:setProvider', (_ev, id: string, pref: { enabled?: boolean }) => e.setProviderPref(id, pref))
   ipcMain.handle('sources:moveProvider', (_ev, id: string, dir: -1 | 1) => e.moveProvider(id, dir))

@@ -41,6 +41,8 @@ export interface ProviderDef {
   /** Site blocks automated requests (bot challenge): never scrape it — build URLs from what the
    *  player learned, otherwise open its search page in the player for you to pick once. */
   browserOnly?: boolean
+  /** Sub and dub live on the SAME episode page (server buttons). Regex that matches the page HTML when a dub exists. */
+  samePageDub?: string
 }
 
 export interface Manifest {
@@ -119,4 +121,6 @@ export interface ResolveResult {
   audio?: 'sub' | 'dub'
   /** Dub was requested but only the sub was found. */
   audioFallback?: boolean
+  /** The page offers Sub/Dub buttons — the player must click the right one after loading. */
+  audioOnPage?: boolean
 }

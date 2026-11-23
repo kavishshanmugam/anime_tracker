@@ -19,14 +19,18 @@ export default function Onboarding({ onSkip }: { onSkip?: () => void }) {
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState(0)
   const [importedCount, setImportedCount] = useState(0)
+  const [fileError, setFileError] = useState<string | null>(null)
 
   const handleSelectFile = async () => {
     if (!window.api) return
-    const path = await window.api.fs.selectFile([{ name: 'XML Files', extensions: ['xml'] }])
+    const path = await window.api.fs.selectFile([{ name: 'MyAnimeList export (.xml, .xml.gz)', extensions: ['xml', 'gz'] }, { name: 'All Files', extensions: ['*'] }])
     if (!path) return
-    const content = await window.api.fs.readFile(path)
-    const result = parseMALExport(content)
-    setMalResult(result)
+    try {
+      const result = parseMALExport(await window.api.fs.readFile(path))
+      if (!result.total) { setFileError("No anime found in that file — pick the animelist_….xml (or .xml.gz) file MyAnimeList gave you."); return }
+      setFileError(null)
+      setMalResult(result)
+    } catch { setFileError('Could not read that file.') }
   }
 
   const handleImport = async () => {
@@ -36,7 +40,9 @@ export default function Onboarding({ onSkip }: { onSkip?: () => void }) {
 
     for (const entry of malResult.entries) {
       // Create anime record with mal_id
-      const animeId = await window.api.db.upsertAnime({
+      // Already known: keep its fetched covers/details, only set your list entry.
+      const existing = await window.api.db.getAnimeByMalId(entry.malId)
+      const animeId = existing?.id ?? await window.api.db.upsertAnime({
         mal_id: entry.malId,
         anilist_id: null,
         title: entry.title,
@@ -124,8 +130,9 @@ export default function Onboarding({ onSkip }: { onSkip?: () => void }) {
               onClick={handleSelectFile}
               className="w-full rounded-card border-2 border-dashed border-border py-8 text-sm text-text-2 hover:border-accent hover:text-text-1 transition-colors"
             >
-              {malResult ? `${malResult.total} entries found` : 'Select your MAL export file (.xml)'}
+              {malResult ? `${malResult.total} entries found` : 'Select your MAL export file (.xml or .xml.gz)'}
             </button>
+            {fileError && <p className="text-sm text-status-dropped">{fileError}</p>}
 
             {malResult && (
               <>

@@ -163,6 +163,7 @@ app.whenReady().then(async () => {
   registerAllHandlers(ipcMain)
   registerStreamHandlers(getAppState, setAppState)
   registerAccountHandlers()
+  ipcMain.handle('app:setFullscreen', (_e, on: boolean) => { mainWindow?.setFullScreen(!!on) })
   createWindow()
   startExtensionServer()
 })

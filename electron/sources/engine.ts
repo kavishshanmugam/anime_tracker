@@ -32,6 +32,9 @@ export const isDub = (text: string) => /(^|[^a-z])(dub|dubbed|english-dub)([^a-z
 /** Shows are cached per language: sub uses the plain title key (backwards compatible). */
 export const showKey = (title: string, audio: Audio) => audio === 'dub' ? `${slugify(title)}::dub` : slugify(title)
 
+/** A "DUB" label/button in the page: the site offers a dub on the same episode page. */
+const GENERIC_DUB_MARKER = '<(?:label|button|span|a|li|div|option)\\b[^>]*>(?:\\s*<[^>]+>)*\\s*(?:english\\s+)?dub(?:bed)?\\s*:?\\s*<'
+
 export interface Store {
   get(key: string): string | null
   set(key: string, value: string): void
@@ -148,7 +151,7 @@ export class SourceEngine {
       if (!p.id || !p.name || !p.searchPath || !Array.isArray(p.domains) || !Array.isArray(p.brandLabels)) return false
       if (p.domains.some((d: string) => !/^https:\/\//.test(d))) return false
       const regexes = [...(p.fingerprint ?? []), ...(p.showLink ?? []), ...(p.episodeLink ?? []),
-        p.episodeUrlPattern, p.showUrlPattern, p.episodeAjax?.idPattern].filter(Boolean)
+        p.episodeUrlPattern, p.showUrlPattern, p.episodeAjax?.idPattern, p.samePageDub].filter(Boolean)
       for (const r of regexes) { try { new RegExp(String(r).replace(/\{ep\}/g, '1')) } catch { return false } }
     }
     return true
@@ -562,10 +565,26 @@ export class SourceEngine {
       const origins = this.usableOrigins(p.id, exclude)
       if (!origins.length) { tried.push({ providerId: p.id, reason: 'no safe, reachable domain' }); return null }
       for (const origin of origins.slice(0, 3)) {
-        const out = await this.resolveOn(p, origin, titles, key, ep, audio)
+        // Sites that list the dub as its own show ("… (Dub)") are searched for that; sites with
+        // Sub/Dub buttons on one episode page resolve the normal page and check it offers a dub.
+        let out: Outcome = audio === 'dub' && p.samePageDub ? {} : await this.resolveOn(p, origin, titles, key, ep, audio)
+        let audioOnPage = false
+        if (audio === 'dub' && !out.url && !out.netFail) {
+          const sub = await this.resolveOn(p, origin, [title, opts.titleEn, ...(opts.altTitles ?? [])].filter((t): t is string => !!t).slice(0, 5), showKey(title, 'sub'), ep, 'sub')
+          if (sub.url) {
+            let has = !!p.browserOnly // can't inspect: let the player try the Dub button
+            if (!has) {
+              const pg = await this.fetchPage(origin, sub.url)
+              has = pg.html ? new RegExp(p.samePageDub ?? GENERIC_DUB_MARKER, 'i').test(pg.html) : !!p.samePageDub
+            }
+            out = has ? sub : { reason: `episode ${ep} has no dub on this site` }
+            audioOnPage = has
+          } else out = sub
+        }
         if (out.url) {
-          this.log(`resolved "${title}" ep ${ep} (${audio}) → ${out.url}`)
-          return { url: out.url, isSearch: false, providerId: p.id, providerName: p.name, origin, tried, providers: this.providerSummary() }
+          this.log(`resolved "${title}" ep ${ep} (${audio}${audioOnPage ? ', same page' : ''}) → ${out.url}`)
+          return { url: out.url, isSearch: false, providerId: p.id, providerName: p.name, origin, tried, providers: this.providerSummary(),
+            audioOnPage: audioOnPage || (audio === 'sub' && !!p.samePageDub) }
         }
         tried.push({ providerId: p.id, origin, reason: out.reason ?? 'unknown' })
         searchFallback ??= { url: origin + fillTemplate(p.searchPath, { q: encodeURIComponent(cleanTitle(audio === 'dub' ? `${title} dub` : title)) }), p, origin }
@@ -620,7 +639,7 @@ export class SourceEngine {
     let count: number | null = null
     for (const p of this.providers()) {
       const origin = this.usableOrigins(p.id).find(o => !this.cooling(this.state.domains[o]))
-      if (!origin) continue
+      if (!origin || p.browserOnly || (audio === 'dub' && p.samePageDub)) continue
       let path = this.state.slugs[key]?.[p.id]
       if (path?.startsWith('tpl:')) continue // learned per-episode template: no show page to count
       if (!path) {
@@ -688,14 +707,17 @@ export class SourceEngine {
   }
 
   /** Called by the player when the user navigates inside the site. */
-  learnFromUrl(title: string, url: string, wantedEp: number): { providerId: string; onEpisode: boolean; episode?: number; redirect?: string; audio: Audio } | null {
+  learnFromUrl(title: string, url: string, wantedEp: number): { providerId: string; onEpisode: boolean; episode?: number; redirect?: string; audio?: Audio } | null {
     let u: URL
     try { u = new URL(url) } catch { return null }
     const d = Object.values(this.state.domains).find(x => hostMatches(u.hostname, x.origin))
     const p = d ? this.provider(d.providerId) : this.providers(true).find(x => x.brandLabels.includes(brandLabel(u.hostname)))
     if (!p) return null
-    const audio: Audio = isDub(u.pathname + u.search) ? 'dub' : 'sub'
-    const key = showKey(title, audio)
+    // On sites with Sub/Dub buttons on one page the URL says nothing about the language you picked.
+    const samePage = !!p.samePageDub
+    const audioGuess: Audio = !samePage && isDub(u.pathname + u.search) ? 'dub' : 'sub'
+    const audio = samePage ? undefined : audioGuess
+    const key = showKey(title, audioGuess)
     const path = u.pathname
     const genericEp = /-episode-(\d+)|\/(?:episode|ep)[-/](\d+)|[?&](?:ep|episode)=(\d+)/i
     const epRe = p.episodeUrlPattern ? new RegExp(p.episodeUrlPattern, 'i') : null
@@ -952,7 +974,7 @@ export class SourceEngine {
    * Player "Paste a link": user found the show/episode page themselves. Vet the domain
    * (adding the site as a source if new), then learn from the URL and play it.
    */
-  async useLink(title: string, url: string, ep: number): Promise<{ ok: boolean; message: string; url?: string; providerId?: string }> {
+  async useLink(title: string, url: string, ep: number, opts: { titleEn?: string; anilistId?: number; audio?: Audio } = {}): Promise<{ ok: boolean; message: string; url?: string; providerId?: string; audioOnPage?: boolean; audio?: 'sub' | 'dub'; audioFallback?: boolean; isSearch?: boolean }> {
     let u: URL
     try { u = new URL(url.trim()) } catch { return { ok: false, message: 'Not a valid link' } }
     if (u.protocol !== 'https:') return { ok: false, message: 'Only HTTPS links are allowed' }
@@ -970,7 +992,19 @@ export class SourceEngine {
       if (!d || !report || !this.usable(d)) return { ok: false, message: `${u.hostname} did not pass the safety checks` }
     }
     const learned = this.learnFromUrl(title, u.href, ep)
-    return { ok: true, message: `Playing from ${u.hostname}`, url: learned?.redirect ?? u.href, providerId: d.providerId }
+    if (learned?.onEpisode || learned?.redirect)
+      return { ok: true, message: `Playing from ${u.hostname}`, url: learned.redirect ?? u.href, providerId: d.providerId,
+        // Sub/Dub buttons on the page: the player still has to click the chosen language.
+        // (Also when Dub is wanted and the link isn't a dedicated dub page: try the page's Dub button.)
+        audioOnPage: !!this.provider(d.providerId)?.samePageDub || (opts.audio === 'dub' && !isDub(u.pathname + u.search)) }
+    // Not an episode/show link (e.g. the site's homepage): look the episode up on that site.
+    const r = await this.resolveEpisode(title, ep, { ...opts, providerId: d.providerId })
+    if (r.providerId === d.providerId && r.url) {
+      return { ok: true, url: r.url, providerId: d.providerId, audioOnPage: r.audioOnPage, audio: r.audio, audioFallback: r.audioFallback, isSearch: r.isSearch,
+        message: r.isSearch ? `Couldn't match the show on ${u.hostname} automatically — pick it in the results`
+          : `Found episode ${ep} on ${u.hostname}${r.audioFallback ? ' — no dub there, playing the sub' : ''}` }
+    }
+    return { ok: true, message: `Opened ${u.hostname} — browse to the episode and Senpai will remember it`, url: u.href, providerId: d.providerId }
   }
 
   removeCustomProvider(id: string) {

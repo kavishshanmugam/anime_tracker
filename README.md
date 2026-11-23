@@ -12,11 +12,11 @@ A local-first desktop app that tracks your anime watching, syncs airing schedule
 - **Seasonal browser** — Browse what's airing each season
 - **Stats** — Episodes watched, hours, genre breakdown, score distribution, watch heatmap
 - **Up Next** — Home lists every show you're watching whose next episode is out; airing shows you've caught up on move to *Caught Up* (with a countdown) and pop back the moment the next episode airs
-- **Sub / Dub** — pick per show from the episode list (applies to every episode); dubs are found under English titles and AniList alternate names, with a sub fallback when no dub exists
+- **Sub / Dub** — pick per show from the episode list (applies to every episode); works both for sites that list the dub as a separate show (found under English titles and AniList alternate names) and for sites with Sub/Dub server buttons on one episode page (Senpai clicks the right one); falls back to sub when an episode has no dub
 - **English dub tracking** — dub status (complete / in progress / sub only) from the community MAL-Dubs list, DUB badges, Sub/Dub and airing filters, and a notification when a show's dub finishes
 - **Subtitles** — English subtitle tracks are switched on automatically; change or turn off from the player's ⚙ menu
 - **Streaming-style UI** — Top navigation, rotating hero banner, horizontal shelves, episode thumbnails & titles (AniList), series pages with episode grids, player with Up Next list
-- **In-app streaming** — Locked-down player with skip intro/outro (AniSkip), an on-video ⚙ menu for 0.5–3x speed and "Best available" quality that steps down only when it buffers, auto progress tracking and next-episode prompt
+- **In-app streaming** — Locked-down player with skip intro/outro (AniSkip), true video fullscreen (⛶ on the video), an on-video ⚙ menu for 0.5–3x speed and "Best available" quality that steps down only when it buffers, auto progress tracking and next-episode prompt
 - **Self-healing sources** — Streaming sites are data-driven, health-checked, auto-failover between mirrors, and new domains are discovered automatically when one dies
 - **Security gate** — Every streaming domain is vetted (malware DNS filters, domain age, redirects, parked/fake-site detection) before the player will load it
 - **Command palette** — Ctrl+K to search and jump to any show
@@ -71,7 +71,9 @@ Senpai installs to `%LOCALAPPDATA%\Programs\Senpai\` (per-user, no admin).
      automatically; **Sync whole library now** pushes everything once.
 5. **Watch something** — open a show and press **Start watching** / **Continue**. On the player, the **⚙** button
    (bottom-right of the video, appears when you move the mouse) has speed, quality, subtitles, Sub/Dub, autoplay and
-   auto-skip. If an episode can't be found automatically, use **Source → Paste a link** or pick the show on the
+   auto-skip; the **⛶** button next to it fullscreens the video. **Open in browser** opens the page that's playing in
+   your normal browser. If an episode can't be found automatically, use **Source → Paste a link** (an episode link,
+   or just the site's address — Senpai looks the episode up there) or pick the show on the
    site's search page once — Senpai remembers it for later episodes.
 
 ### Troubleshooting
@@ -82,7 +84,7 @@ Senpai installs to `%LOCALAPPDATA%\Programs\Senpai\` (per-user, no admin).
 | Domain shows *unreachable* | The site is down or blocked by your network/ISP — it's retried hourly; try another source |
 | Video won't start | Click play inside the video — sites usually need one click before playback starts |
 | A site shows a "Just a moment…" check | Complete it in the player once; it's the site's bot protection |
-| Episode list looks short for dub | Only episodes that are actually dubbed/aired are shown |
+| Episode list looks short for dub | Only episodes that are actually dubbed/aired are shown. On sites with Sub/Dub buttons on one page the count can't be read in advance: an episode without a dub plays the sub with a notice |
 
 ## Uninstall
 
@@ -97,21 +99,24 @@ Export anytime from **Settings → Library & Data** as JSON (or MAL XML).
 ## Importing from MyAnimeList
 
 1. Go to [myanimelist.net](https://myanimelist.net) > Profile > Export (or [direct link](https://myanimelist.net/panel.php?go=export))
-2. Download and extract the `.xml.gz` file
-3. In Senpai, go to **Settings** > **Import from MyAnimeList** > select the `.xml` file
-4. Done — Senpai fetches cover art and metadata from AniList in the background
+2. Download the export — a file named like `animelist_1234567890_-_1234567.xml.gz`
+3. In Senpai, go to **Settings → Library & Data → MAL Import** and select that file. Both the `.xml.gz` as downloaded
+   and an extracted `.xml` work (Windows may label the `.xml` as a "Microsoft Edge HTML Document" — that's the right file)
+4. Check the summary (entries per status) and click **Import**. Status, progress, score, dates, episode count and
+   rewatch count are imported; re-importing later keeps the covers/details already fetched
+5. Senpai then fetches cover art and metadata from AniList in the background
 
 ## Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
 | Ctrl+K | Command palette / search |
-| Alt+1-7 | Navigate sidebar sections |
+| Alt+1-7 | Jump between the main sections |
 | Escape | Go back |
 | S | Skip intro/outro (player) |
 | N / P | Next / previous episode (player) |
 | [ / ] | Slower / faster playback (player) |
-| F | Fullscreen (player) |
+| F | Fullscreen the video (player) |
 
 ## Streaming Sources
 

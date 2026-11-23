@@ -446,6 +446,48 @@ async function engineTests() {
     assert.equal(r.url, `${N}/sousou-no-frieren-episode-5-english-subbed/`)
     assert.equal(e.state.slugs['sousou-no-frieren']['9anime'], '/anime/sousou-no-frieren/')
   })
+  await test('dub on the same page (SUB:/DUB: buttons): resolves the normal episode page and flags it', async () => {
+    const N = 'https://9anime.by'
+    const page = (dub: boolean) => `<title>Ep</title><div class="server-group"><label><i></i> SUB:</label><button class="server-button selected">MEGA</button></div>` +
+      (dub ? `<div class="server-group"><label><i class="fas"></i> DUB:</label><button class="server-button">MEGA</button></div>` : '')
+    mockSite({
+      [`${N}/?s=Frieren`]: `<div class="bsx"><a href="${N}/anime/frieren/">x</a></div>`,
+      [`${N}/frieren-episode-1-english-subbed/`]: page(true),
+      [`${N}/frieren-episode-2-english-subbed/`]: page(false),
+    })
+    const e = new SourceEngine(memoryStore(), quiet)
+    for (const o of Object.keys(e.state.domains)) delete e.state.domains[o]
+    markSafe(e, N, '9anime')
+    for (const id of ['gogo', 'animesuge', 'animesuge-alt', '4anime']) e.setProviderPref(id, { enabled: false })
+    e.state.lastDiscoveryAt['9anime'] = Date.now()
+    const d1 = await e.resolveEpisode('Frieren', 1, { audio: 'dub' })
+    assert.equal(d1.url, `${N}/frieren-episode-1-english-subbed/`); assert.equal(d1.audio, 'dub'); assert.equal(d1.audioOnPage, true)
+    const d2 = await e.resolveEpisode('Frieren', 2, { audio: 'dub' })
+    assert.equal(d2.audio, 'sub'); assert.equal(d2.audioFallback, true, 'episode without a DUB group falls back to sub')
+    const l = e.learnFromUrl('Frieren', `${N}/frieren-episode-1-english-subbed/`, 1)!
+    assert.equal(l.audio, undefined, 'URL says nothing about language on same-page sites')
+  })
+  await test('pasting a site homepage finds the episode on that site', async () => {
+    const N = 'https://9anime.by'
+    mockSite({
+      [`${N}/?s=Frieren`]: `<div class="bsx"><a href="${N}/anime/frieren/">x</a></div>`,
+      [`${N}/frieren-episode-3-english-subbed/`]: '<title>Ep 3</title>',
+    })
+    const e = new SourceEngine(memoryStore(), quiet)
+    for (const o of Object.keys(e.state.domains)) delete e.state.domains[o]
+    markSafe(e, N, '9anime')
+    e.state.lastDiscoveryAt['9anime'] = Date.now()
+    const r = await e.useLink('Frieren', `${N}/`, 3)
+    assert.equal(r.ok, true); assert.equal(r.url, `${N}/frieren-episode-3-english-subbed/`)
+  })
+  await test('pasting a direct episode link on a Sub/Dub-buttons site still flags the page for the Dub click', async () => {
+    const N = 'https://9anime.by'
+    const e = new SourceEngine(memoryStore(), quiet)
+    for (const o of Object.keys(e.state.domains)) delete e.state.domains[o]
+    markSafe(e, N, '9anime')
+    const r = await e.useLink('Frieren', `${N}/frieren-episode-3-english-subbed/`, 3, { audio: 'dub' })
+    assert.equal(r.ok, true); assert.equal(r.url, `${N}/frieren-episode-3-english-subbed/`); assert.equal(r.audioOnPage, true)
+  })
   await test('legacy slug_cache is migrated to provider-relative paths', () => {
     const store = memoryStore({ slug_cache: JSON.stringify([['naruto', 'https://anitaku.so/category/naruto'], ['bleach', 'bleach']]) })
     const e = new SourceEngine(store, quiet)

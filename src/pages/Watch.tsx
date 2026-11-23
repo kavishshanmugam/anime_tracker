@@ -18,6 +18,22 @@ type Audio = 'sub' | 'dub'
 interface PlayerPrefs { rate: number; quality: QualityPref; subs: { on: boolean; lang: string }; autoplay: boolean; autoSkip: boolean }
 const DEFAULT_PREFS: PlayerPrefs = { rate: 1, quality: 'max', subs: { on: true, lang: 'en' }, autoplay: true, autoSkip: false }
 const COUNTDOWN = 10
+
+// Sites with Sub/Dub server buttons on one episode page: click the first server of the wanted language.
+const PAGE_AUDIO_SCRIPT = (audio: 'sub' | 'dub') => `(() => {
+  const want = ${JSON.stringify(audio)}
+  const norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase().replace(/:$/, '')
+  const pick = b => { if (/\\b(selected|active|current)\\b/.test(b.className)) return 'already'; b.click(); return 'clicked' }
+  for (const l of document.querySelectorAll('label, span, b, strong, h4, h5, li, div')) {
+    if (l.children.length > 1 || norm(l.textContent) !== want) continue
+    const group = l.closest('.server-group, [class*="server"], li, ul') || l.parentElement
+    const btn = group && group.querySelector('button, a[href], option')
+    if (btn) return pick(btn)
+  }
+  const direct = [...document.querySelectorAll('button, a, [role="tab"]')].find(e => norm(e.textContent) === want)
+  return direct ? pick(direct) : 'none'
+})()`
+
 // Page states that mean "this domain is broken" (as opposed to a Cloudflare challenge the user can solve).
 const DEAD_PAGE = /\b(404|not found|page not found|domain.*for sale|buy this domain|account suspended|coming soon|bad gateway|service unavailable|error 52\d|web server is down)\b/i
 const CHALLENGE = /just a moment|checking your browser|attention required|verify you are human|ddos-guard/i
@@ -47,7 +63,12 @@ export default function Watch() {
   // Resume + autoplay
   const [countdown, setCountdown] = useState<number | null>(null)
   const [resumedFrom, setResumedFrom] = useState<number | null>(null)
-  const resumeDoneRef = useRef(false)
+  const resumeTargetRef = useRef<number | null | undefined>(undefined) // undefined = not decided yet
+  const resumeTriesRef = useRef(0)
+  const [videoFs, setVideoFs] = useState(false)
+  const videoFsRef = useRef(false)
+  const toggleFullscreenRef = useRef<() => void>(() => {})
+  videoFsRef.current = videoFs
   const lastSaveRef = useRef(0)
   const skippedRef = useRef<Set<string>>(new Set())
   const countdownCancelledRef = useRef(false)
@@ -186,7 +207,8 @@ export default function Watch() {
     setNotice(null)
     setCountdown(null)
     setResumedFrom(null)
-    resumeDoneRef.current = false
+    resumeTargetRef.current = undefined
+    resumeTriesRef.current = 0
     skippedRef.current = new Set()
     countdownCancelledRef.current = false
     resolve()
@@ -242,9 +264,9 @@ export default function Watch() {
   useEffect(() => {
     if (!onEpisodePage) { setPlayer(null); return }
     const timer = setInterval(async () => {
-      const id = wcId()
-      if (id == null) return
-      const info = await window.api.stream.player(id, {
+      const webContentsId = wcId()
+      if (webContentsId == null) return
+      const info = await window.api.stream.player(webContentsId, {
         type: 'state', prefs: {
           rate: prefsRef.current.rate, mode: prefsRef.current.quality, subs: prefsRef.current.subs, audio: audioRef.current,
           flags: { autoplay: prefsRef.current.autoplay, autoSkip: prefsRef.current.autoSkip },
@@ -257,19 +279,31 @@ export default function Watch() {
         else if (req.type === 'autoskip') savePrefs({ ...prefsRef.current, autoSkip: req.value })
       }
       if (!info || !info.duration) return
-      const animeId = Number(id)
+      const animeId = Number(id) // route param: the show's id (NOT the webview id)
 
-      // Resume where you left off (once per episode).
-      if (!resumeDoneRef.current) {
-        resumeDoneRef.current = true
+      // Resume where you left off. Decide once the real video is loaded (durations match — not a pre-roll ad),
+      // then re-seek a few times if the site's player snaps back to the start when playback begins.
+      if (resumeTargetRef.current === undefined) {
         const pos = getResume(animeId, epNum)
-        if (pos && pos.t > 30 && pos.t < info.duration - 60 && info.time < 15) {
-          window.api.stream.player(id, { type: 'seek', time: pos.t }).catch(() => {})
-          setResumedFrom(pos.t)
+        if (!pos) resumeTargetRef.current = null
+        else if (Math.abs(pos.d - info.duration) < 120) {
+          resumeTargetRef.current = pos.t > 30 && pos.t < info.duration - 60 ? pos.t : null
+          if (resumeTargetRef.current != null) setResumedFrom(pos.t)
         }
+        // Length doesn't match the saved one. A short clip in front of a full episode is a pre-roll ad:
+        // keep waiting for the real video. Anything else (other source / different cut) → the saved
+        // position is stale: skip it so normal saving starts and replaces it.
+        else if (!(info.duration < 240 && pos.d >= 480)) { resumeTargetRef.current = null; clearResume(animeId, epNum) }
       }
-      // Save position every ~5 s of playback.
-      if (!info.paused && Math.abs(info.time - lastSaveRef.current) >= 5) {
+      const target = resumeTargetRef.current
+      const resuming = target != null && resumeTriesRef.current < 6
+      if (resuming) {
+        if (info.time >= target! - 8) resumeTriesRef.current = 99 // landed
+        else if (info.time < 40) { resumeTriesRef.current++; window.api.stream.player(webContentsId, { type: 'seek', time: target! }).catch(() => {}) }
+        else resumeTriesRef.current = 99 // you moved somewhere else yourself
+      }
+      // Save position every ~5 s of playback (not while a resume is still settling).
+      if (!resuming && target !== undefined && !info.paused && Math.abs(info.time - lastSaveRef.current) >= 5) {
         lastSaveRef.current = info.time
         setResume(animeId, epNum, info.time, info.duration)
       }
@@ -280,7 +314,7 @@ export default function Watch() {
         const key = `${seg.type}:${seg.startTime}`
         if (!skippedRef.current.has(key)) {
           skippedRef.current.add(key)
-          window.api.stream.player(id, { type: 'seek', time: seg.endTime }).catch(() => {})
+          window.api.stream.player(webContentsId, { type: 'seek', time: seg.endTime }).catch(() => {})
           setNotice(seg.type === 'recap' ? 'Skipped recap' : 'Skipped intro')
         }
       }
@@ -296,10 +330,13 @@ export default function Watch() {
       const subsChanged = info.subs.tracks.length > 0 && (info.subs.on !== pr.subs.on || info.subs.lang !== pr.subs.lang)
       if (Math.abs(info.rate - pr.rate) > 0.01 || (mode && mode !== pr.quality) || subsChanged)
         savePrefs({ ...pr, rate: info.rate, quality: mode ?? pr.quality, subs: subsChanged ? { on: info.subs.on, lang: info.subs.lang } : pr.subs })
+      if (info.exitFs && videoFsRef.current) toggleFullscreenRef.current()
       if (info.events.length) setNotice(info.events[info.events.length - 1])
       setActiveSkip(skips.find(sk => info.time >= sk.startTime && info.time < sk.endTime) ?? null)
-      if (info.time / info.duration > 0.85) markWatched()
-      if (info.time / info.duration > 0.92) clearResume(animeId, epNum)
+      if (resumeTargetRef.current !== undefined) { // undefined = a pre-roll ad is still in front of the episode
+        if (info.time / info.duration > 0.85) markWatched()
+        if (info.time / info.duration > 0.92) clearResume(animeId, epNum)
+      }
       setNearEnd(info.duration - info.time < 30)
     }, 1500)
     return () => clearInterval(timer)
@@ -320,15 +357,47 @@ export default function Watch() {
     setActiveSkip(null)
   }, [activeSkip])
 
+  // Opens the page that's playing right now in your normal browser (falls back to a web search if nothing is loaded).
   const openInBrowser = () => {
-    window.open(`https://www.google.com/search?q=${encodeURIComponent(`${title} episode ${epNum} watch online sub`)}`, '_blank')
+    let url = ''
+    try { url = webviewRef.current?.getURL?.() ?? '' } catch { /* webview not ready */ }
+    if (!/^https:/.test(url)) url = resultRef.current?.url ?? ''
+    if (!/^https:/.test(url)) url = `https://www.google.com/search?q=${encodeURIComponent(`${titleEn ?? title} episode ${epNum} watch online`)}`
+    window.open(url, '_blank')
   }
 
-  const toggleFullscreen = useCallback(() => {
+  /** Click the Sub/Dub server on sites that keep both on one page. */
+  const applyPageAudio = useCallback(async (announce = true) => {
+    const wv = webviewRef.current
+    if (!wv || !resultRef.current?.audioOnPage) return
+    try {
+      const want = resultRef.current.audio ?? audioRef.current
+      const r = await wv.executeJavaScript(PAGE_AUDIO_SCRIPT(want))
+      if (r === 'clicked' && announce) setNotice(`Switched to ${want === 'dub' ? 'Dub' : 'Sub'} on this page`)
+      if (r === 'none' && want === 'dub' && announce) setNotice("Couldn't find a Dub button on this page — pick it on the site if it's there")
+    } catch { /* page still loading */ }
+  }, [])
+  useEffect(() => { if (result?.audioOnPage) { const t = setTimeout(() => applyPageAudio(), 600); return () => clearTimeout(t) } }, [result, applyPageAudio])
+
+  // Fullscreen = the VIDEO fills the screen: ask the site's player to go fullscreen; the webview then reports
+  // it (enter-html-full-screen) and we stretch the player box over the whole window.
+  const toggleFullscreen = useCallback(async () => {
+    if (videoFsRef.current) { // leave: exit from the page's top document (works whichever frame went fullscreen)
+      try { await webviewRef.current?.executeJavaScript('document.exitFullscreen()', true) } catch { /* already out */ }
+      setVideoFs(false)
+      window.api.app.setFullscreen(false).catch(() => {})
+      return
+    }
+    const wid = wcId()
+    const ok = wid != null ? await window.api.stream.player(wid, { type: 'fullscreen' }).catch(() => null) : null
+    if (ok) return
+    // No video found yet: fall back to making the player box fullscreen.
     if (!containerRef.current) return
     if (document.fullscreenElement) document.exitFullscreen()
     else containerRef.current.requestFullscreen()
   }, [])
+  toggleFullscreenRef.current = toggleFullscreen
+  useEffect(() => () => { window.api?.app.setFullscreen(false).catch(() => {}) }, [])
 
   useEffect(() => {
     const onChange = () => setIsFullscreen(!!document.fullscreenElement)
@@ -357,14 +426,15 @@ export default function Watch() {
         case ']': case '>': stepSpeed(1); break
         case '[': case '<': stepSpeed(-1); break
         case 'Escape':
-          if (isFullscreen) document.exitFullscreen()
+          if (videoFs) toggleFullscreen()
+          else if (isFullscreen) document.exitFullscreen()
           else navigate(`/anime/${id}`, { replace: true })
           break
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [activeSkip, isFullscreen, id, handleSkip, toggleFullscreen, navigate, navigateEp, epNum, hasNext, stepSpeed])
+  }, [activeSkip, isFullscreen, videoFs, id, handleSkip, toggleFullscreen, navigate, navigateEp, epNum, hasNext, stepSpeed])
 
   const skipLabel = activeSkip?.type === 'op' ? 'Skip Intro'
     : activeSkip?.type === 'ed' ? 'Skip Outro'
@@ -377,7 +447,7 @@ export default function Watch() {
       try {
         const learned = await window.api.stream.learnFromUrl(title, url, epNum)
         if (!learned) { setOnEpisodePage(false); return }
-        if (learned.onEpisode && learned.audio !== audioRef.current) changeAudio(learned.audio, false)
+        if (learned.onEpisode && learned.audio === 'dub' && audioRef.current !== 'dub' && !resultRef.current?.audioOnPage) changeAudio('dub', false)
         if (learned.redirect && learned.redirect !== url) { wv.loadURL(learned.redirect); return }
         setOnEpisodePage(learned.onEpisode)
       } catch { /* */ }
@@ -404,12 +474,16 @@ export default function Watch() {
       } catch { /* */ }
     })
 
+    wv.addEventListener('enter-html-full-screen', () => { setVideoFs(true); window.api.app.setFullscreen(true).catch(() => {}) })
+    wv.addEventListener('leave-html-full-screen', () => { setVideoFs(false); window.api.app.setFullscreen(false).catch(() => {}) })
+    wv.addEventListener('did-stop-loading', () => { setTimeout(() => applyPageAudio(false), 800) })
+
     wv.addEventListener('did-fail-load', (e: any) => {
       // -3 = aborted (normal when navigating away)
       if (!e.isMainFrame || e.errorCode === -3) return
       failover(e.errorDescription || `load error ${e.errorCode}`)
     })
-  }, [title, epNum, failover, changeAudio])
+  }, [title, epNum, failover, changeAudio, applyPageAudio])
 
   const providers = result?.providers ?? []
   const total = totalEps ?? anime?.episodes_total ?? undefined
@@ -424,12 +498,12 @@ export default function Watch() {
     if (!linkValue.trim()) return
     setLinkBusy(true)
     try {
-      const r = await window.api.stream.useLink(title, linkValue.trim(), epNum)
+      const r = await window.api.stream.useLink(title, linkValue.trim(), epNum, { titleEn, anilistId: anilistIdRef.current, audio: audioRef.current })
       setNotice(r.message)
       if (r.ok && r.url) {
         const origin = new URL(r.url).origin
         setResult(prev => ({
-          url: r.url!, isSearch: false, providerId: r.providerId, origin,
+          url: r.url!, isSearch: !!r.isSearch, providerId: r.providerId, origin, audioOnPage: r.audioOnPage, audio: r.audio, audioFallback: r.audioFallback,
           providerName: new URL(r.url!).hostname, tried: prev?.tried ?? [], providers: prev?.providers ?? [],
         }))
         setLinkOpen(false)
@@ -451,7 +525,7 @@ export default function Watch() {
           {/* ---------- Player column ---------- */}
           <div className="min-w-0 space-y-4">
             <div ref={containerRef}
-              className={`relative w-full overflow-hidden bg-black ${isFullscreen ? 'h-screen' : 'aspect-video rounded-[6px] shadow-2xl'}`}>
+              className={`overflow-hidden bg-black ${videoFs ? 'fixed inset-0 z-[90]' : isFullscreen ? 'relative h-screen w-full' : 'relative aspect-video w-full rounded-[6px] shadow-2xl'}`}>
               {result?.url && (
                 <webview
                   key={result.url}
@@ -598,8 +672,8 @@ export default function Watch() {
               <button onClick={markWatched} disabled={watchMarked} className={`${toolBtn} ${watchMarked ? '!text-status-completed' : ''}`}>
                 {watchMarked ? '✓ Watched' : 'Mark watched'}
               </button>
-              <button onClick={toggleFullscreen} className={toolBtn}>{isFullscreen ? 'Exit fullscreen' : '⛶ Fullscreen'}</button>
-              <button onClick={openInBrowser} className={toolBtn}>Open in browser</button>
+              <button onClick={toggleFullscreen} className={toolBtn} title="Fullscreen the video (also the ⛶ button on the video itself)">{isFullscreen || videoFs ? 'Exit fullscreen' : '⛶ Fullscreen'}</button>
+              <button onClick={openInBrowser} className={toolBtn} title="Open this episode's page in your normal browser">Open in browser</button>
             </div>
 
             {linkOpen && (

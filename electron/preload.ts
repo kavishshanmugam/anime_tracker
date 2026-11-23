@@ -39,7 +39,7 @@ contextBridge.exposeInMainWorld('api', {
     getSkipTimes: (malId: number, ep: number, duration?: number) => ipcRenderer.invoke('stream:getSkipTimes', malId, ep, duration),
     learnFromUrl: (title: string, url: string, ep: number) => ipcRenderer.invoke('stream:learnFromUrl', title, url, ep),
     reportFailure: (url: string, reason: string) => ipcRenderer.invoke('stream:reportFailure', url, reason),
-    useLink: (title: string, url: string, ep: number) => ipcRenderer.invoke('stream:useLink', title, url, ep),
+    useLink: (title: string, url: string, ep: number, opts?: { titleEn?: string; anilistId?: number; audio?: 'sub' | 'dub' }) => ipcRenderer.invoke('stream:useLink', title, url, ep, opts),
     episodeCount: (title: string, audio: 'sub' | 'dub', opts?: { titleEn?: string; anilistId?: number }) => ipcRenderer.invoke('stream:episodeCount', title, audio, opts),
     clearCache: (title?: string) => ipcRenderer.invoke('stream:clearCache', title),
     prefetch: (title: string, titleEn?: string) => ipcRenderer.invoke('stream:prefetch', title, titleEn),
@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   app: {
     getDataPath: () => ipcRenderer.invoke('app:getDataPath'),
+    setFullscreen: (on: boolean) => ipcRenderer.invoke('app:setFullscreen', on),
     onDeepLink: (callback: (url: string) => void) => {
       ipcRenderer.removeAllListeners('deep-link')
       ipcRenderer.on('deep-link', (_event, url) => callback(url))

@@ -29,7 +29,7 @@ export function playerHook() {
   const S: any = {
     hlsList: [], rate: null, mode: 'max', idx: 0, applied: false, failed: {}, stalls: [] as number[],
     stallStart: 0, graceUntil: 0, lastChange: 0, lastStall: 0, downgrades: 0, video: null, levelKey: '',
-    events: [] as string[], settingRate: false,
+    events: [] as string[], settingRate: false, exitFs: false,
     subPref: null as null | { on: boolean; lang: string }, subKey: '', audio: 'sub', requests: [] as any[],
   }
   w.__senpai = S
@@ -328,6 +328,8 @@ export function playerHook() {
     if (prefs && prefs.audio) S.audio = prefs.audio
     if (prefs && prefs.flags) S.flags = prefs.flags
     bind(v)
+    const exitFs = S.exitFs
+    if (drain) S.exitFs = false
     const a = adapter(v)
     const levels = a ? a.levels() : []
     return {
@@ -335,7 +337,7 @@ export function playerHook() {
       height: v.videoHeight || 0, buffering: !!S.stallStart || v.readyState < 3,
       adapter: a ? a.name : null, levels: levels.map(labelOf), mode: S.mode,
       selected: a && !(S.mode === 'auto') ? S.idx : -1, playerAuto: a ? !!a.isAuto() : false,
-      downgrades: S.downgrades, events: drain ? S.events.splice(0) : S.events.slice(),
+      exitFs, downgrades: S.downgrades, events: drain ? S.events.splice(0) : S.events.slice(),
       subs: (() => {
         const c = captions(v)
         const tracks = c ? c.tracks().map((t: any) => t.label) : []
@@ -347,6 +349,35 @@ export function playerHook() {
     }
   }
   S.setRate = (r: number) => { S.rate = r; applyRate(); return true }
+  /** Seek through the site player's own API when there is one (a raw currentTime set before playback gets reset). */
+  S.seek = (t: number) => {
+    const v = (S.video as HTMLVideoElement | null) || findVideo()
+    if (!v) return null
+    try { if (typeof w.jwplayer === 'function' && w.jwplayer().seek) { w.jwplayer().seek(t); return true } } catch { /* not JW */ }
+    try { const pl = (v as any).plyr; if (pl) { pl.currentTime = t; return true } } catch { /* */ }
+    v.currentTime = t
+    return true
+  }
+  /** Fullscreen just the video (toggle). Needs a user gesture — called from a click or with userGesture. */
+  S.fullscreen = () => {
+    const v = (S.video as HTMLVideoElement | null) || findVideo()
+    if (!v) return null
+    let jwFs = false
+    try { jwFs = typeof w.jwplayer === 'function' && !!w.jwplayer().getFullscreen?.() } catch { /* not JW */ }
+    // Some hosts hide document.fullscreenElement, so also ask the player and the :fullscreen selector.
+    if (document.fullscreenElement || jwFs || document.querySelector(':fullscreen') || (innerHeight >= screen.height && innerWidth >= screen.width)) {
+      // ponytail: when the page around this frame is what's fullscreen we can't exit from in here —
+      // exitFs asks the app (read on its next poll, <= 1.5 s) to leave fullscreen from the top document.
+      S.exitFs = true
+      try { if (jwFs) w.jwplayer().setFullscreen(false) } catch { /* fall through */ }
+      try { document.exitFullscreen().catch(() => {}) } catch { /* not fullscreen */ }
+      return true
+    }
+    try { if (typeof w.jwplayer === 'function' && w.jwplayer().setFullscreen) { w.jwplayer().setFullscreen(true); return true } } catch { /* not JW */ }
+    const box = (v.closest && v.closest('.jwplayer, .plyr, .video-js')) || v.parentElement || v
+    ;(box as HTMLElement).requestFullscreen().catch(() => { v.requestFullscreen().catch(() => {}) })
+    return true
+  }
   S.setSubs = (i: number) => {
     const v = S.video as HTMLVideoElement | null
     const c = v && captions(v)
@@ -414,19 +445,29 @@ export function playerUi() {
     .row .sub { display: block; color: #6B767E; font-size: 11px; font-weight: 400; margin-top: 1px; }
     .head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 8px; margin-bottom: 4px; border-bottom: 1px solid #262B30;
       font-size: 13px; font-weight: 700; }
+    .bar { display: flex; gap: 6px; }
+    .btn.fs { padding: 0 10px; }
+    .x { margin-left: auto; border: 0; background: transparent; color: #A2ACB4; cursor: pointer; font-size: 15px; padding: 0 6px; }
+    .x:hover { color: #fff; }
     .back { border: 0; background: transparent; color: #A2ACB4; cursor: pointer; font-size: 16px; padding: 0 4px; }
     .note { padding: 8px 10px; color: #6B767E; font-size: 12px; line-height: 1.4; }
   </style>
   <div class="wrap">
     <div class="panel"></div>
-    <button class="btn" title="Playback settings">
+    <div class="bar">
+    <button class="btn fs" title="Fullscreen video">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+    </button>
+    <button class="btn gear" title="Playback settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
       <span class="label"></span>
     </button>
+    </div>
   </div>`
   const wrap = root.querySelector('.wrap') as HTMLDivElement
   const panel = root.querySelector('.panel') as HTMLDivElement
-  const btn = root.querySelector('.btn') as HTMLButtonElement
+  const btn = root.querySelector('.btn.gear') as HTMLButtonElement
+  const fsBtn = root.querySelector('.btn.fs') as HTMLButtonElement
   const label = root.querySelector('.label') as HTMLSpanElement
   let view: 'main' | 'speed' | 'quality' | 'subs' | 'audio' | null = null
   let hideTimer: any = 0
@@ -453,7 +494,7 @@ export function playerUi() {
     if (!view) { panel.classList.remove('open'); return }
     panel.classList.add('open')
     if (view === 'main') {
-      panel.innerHTML = `
+      panel.innerHTML = `<div class="head">Settings<button class="x" data-close="1" title="Close">✕</button></div>
         <button class="row" data-go="speed">Playback speed <span class="val">${st ? fmtRate(st.rate) : ''} ›</span></button>
         <button class="row" data-go="quality">Quality <span class="val">${esc(qualityText(st))} ›</span></button>
         <button class="row" data-go="subs">Subtitles <span class="val">${esc(subsText(st))} ›</span></button>
@@ -461,10 +502,10 @@ export function playerUi() {
         <button class="row" data-flag="autoplay">Autoplay next episode <span class="val">${st && st.flags && st.flags.autoplay === false ? 'Off' : 'On'}</span></button>
         <button class="row" data-flag="autoskip">Auto-skip intro <span class="val">${st && st.flags && st.flags.autoSkip ? 'On' : 'Off'}</span></button>`
     } else if (view === 'speed') {
-      panel.innerHTML = `<div class="head"><button class="back" data-go="main">‹</button>Playback speed</div>` +
+      panel.innerHTML = `<div class="head"><button class="back" data-go="main">‹</button>Playback speed<button class="x" data-close="1" title="Close">✕</button></div>` +
         SPEEDS.map(r => `<button class="row ${st && Math.abs(st.rate - r) < 0.01 ? 'sel' : ''}" data-rate="${r}">${r === 1 ? 'Normal' : fmtRate(r)}${st && Math.abs(st.rate - r) < 0.01 ? '<span class="val">✓</span>' : ''}</button>`).join('')
     } else if (view === 'subs') {
-      let html = `<div class="head"><button class="back" data-go="main">‹</button>Subtitles</div>`
+      let html = `<div class="head"><button class="back" data-go="main">‹</button>Subtitles<button class="x" data-close="1" title="Close">✕</button></div>`
       const subs = st && st.subs
       if (!subs || !subs.tracks.length) {
         html += `<div class="note">No separate subtitle tracks in this video. Sub episodes on most sites have the subtitles built into the picture.</div>`
@@ -475,11 +516,11 @@ export function playerUi() {
       panel.innerHTML = html
     } else if (view === 'audio') {
       const a = st && st.audio === 'dub' ? 'dub' : 'sub'
-      panel.innerHTML = `<div class="head"><button class="back" data-go="main">‹</button>Audio</div>
+      panel.innerHTML = `<div class="head"><button class="back" data-go="main">‹</button>Audio<button class="x" data-close="1" title="Close">✕</button></div>
         <button class="row ${a === 'sub' ? 'sel' : ''}" data-audio="sub"><span>Sub<span class="sub">Japanese audio, subtitled</span></span></button>
         <button class="row ${a === 'dub' ? 'sel' : ''}" data-audio="dub"><span>Dub<span class="sub">English audio — reloads the episode</span></span></button>`
     } else {
-      let html = `<div class="head"><button class="back" data-go="main">‹</button>Quality</div>`
+      let html = `<div class="head"><button class="back" data-go="main">‹</button>Quality<button class="x" data-close="1" title="Close">✕</button></div>`
       if (!st || !st.adapter) {
         html += `<div class="note">This site's player picks the quality itself${st && st.height ? ` (now ${st.height}p)` : ''}.</div>`
       } else {
@@ -496,7 +537,8 @@ export function playerUi() {
     e.stopPropagation()
     const t = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null
     if (!t) return
-    if (t.dataset.go) view = t.dataset.go as any
+    if (t.dataset.close) view = null
+    else if (t.dataset.go) view = t.dataset.go as any
     else if (t.dataset.rate) { S.setRate(Number(t.dataset.rate)); view = null }
     else if (t.dataset.q) { S.setQuality(t.dataset.q); view = null }
     else if (t.dataset.level) { S.setQuality('manual', Number(t.dataset.level)); view = null }
@@ -511,9 +553,11 @@ export function playerUi() {
     poke()
   })
   btn.addEventListener('click', (e) => { e.stopPropagation(); view = view ? null : 'main'; render(); poke() })
+  fsBtn.addEventListener('click', (e) => { e.stopPropagation(); view = null; render(); S.fullscreen() })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && view) { view = null; render() } }, true)
   // Clicks inside our UI must not reach the page (which would toggle play/pause).
   for (const ev of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'dblclick']) wrap.addEventListener(ev, e => e.stopPropagation())
-  document.addEventListener('click', () => { if (view) { view = null; render() } }, true)
+  document.addEventListener('click', (e) => { if (view && !e.composedPath().includes(host)) { view = null; render() } }, true)
 
   const place = () => {
     const v = (S.video as HTMLVideoElement) || document.querySelector('video')
@@ -531,8 +575,9 @@ export function playerUi() {
     clearTimeout(hideTimer)
     hideTimer = setTimeout(() => {
       const v = S.video as HTMLVideoElement | null
-      if (!view && v && !v.paused) wrap.classList.remove('show')
-    }, 2800)
+      if (view) { view = null; render() } // left open and idle: close it
+      if (v && !v.paused) wrap.classList.remove('show')
+    }, view ? 6000 : 2800)
   }
 
   const attach = () => {

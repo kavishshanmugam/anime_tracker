@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "updated": "2026-11-06",
+  "version": 3,
+  "updated": "2026-11-23",
   "tlds": ["so", "to", "pe", "bz", "io", "gg", "tv", "cc", "co", "me", "fi", "by", "ws", "lol", "vc", "se", "li", "nz", "mx", "sh"],
   "adHosts": [
     "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
@@ -54,7 +54,8 @@
       "episodeUrlPattern": "^/([a-z0-9][\\w-]*?)-episode-(\\d+)",
       "showUrlPattern": "^/anime/([a-z0-9][\\w-]*?)/?$",
       "episodeUrlTemplate": "/{slug}-episode-{ep}-english-subbed/",
-      "showPathTemplate": "/anime/{slug}/"
+      "showPathTemplate": "/anime/{slug}/",
+      "samePageDub": "<label[^>]*>(?:\\s*<[^>]+>)*\\s*DUB\\s*:"
     },
     {
       "id": "animesuge",
@@ -71,7 +72,8 @@
       "episodeUrlPattern": "^/([a-z0-9][\\w-]*?)-episode-(\\d+)",
       "showUrlPattern": "^/anime/([a-z0-9][\\w-]*?)/?$",
       "episodeUrlTemplate": "/{slug}-episode-{ep}-english-subbed/",
-      "showPathTemplate": "/anime/{slug}/"
+      "showPathTemplate": "/anime/{slug}/",
+      "samePageDub": "<label[^>]*>(?:\\s*<[^>]+>)*\\s*DUB\\s*:"
     },
     {
       "id": "animesuge-alt",

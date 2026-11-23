@@ -29,6 +29,7 @@ export interface ResolveResult {
   providers: { id: string; name: string; available: boolean }[]
   audio?: 'sub' | 'dub'
   audioFallback?: boolean
+  audioOnPage?: boolean
 }
 
 export interface AccountView { clientId: string; connected: boolean; user: string | null; lastSync: number | null; lastError: string | null; expiresAt: number | null }
@@ -53,6 +54,8 @@ export interface PlayerState {
   downgrades: number
   /** Controller messages since last poll, e.g. "Lowered to 720p (buffered 3.1s)". */
   events: string[]
+  /** The on-video fullscreen button was pressed while fullscreen; the app leaves video fullscreen. */
+  exitFs?: boolean
   /** Separate subtitle tracks in the video (empty = none / burned-in). */
   subs: { tracks: string[]; current: number; on: boolean; lang: string }
   audio: 'sub' | 'dub'
@@ -269,10 +272,10 @@ export interface ElectronAPI {
   stream: {
     resolveEpisode: (title: string, ep: number, opts?: { titleEn?: string; providerId?: string; excludeOrigins?: string[]; audio?: 'sub' | 'dub'; anilistId?: number }) => Promise<ResolveResult>
     getSkipTimes: (malId: number, ep: number, duration?: number) => Promise<SkipTime[]>
-    learnFromUrl: (title: string, url: string, ep: number) => Promise<{ providerId: string; onEpisode: boolean; episode?: number; redirect?: string; audio: 'sub' | 'dub' } | null>
+    learnFromUrl: (title: string, url: string, ep: number) => Promise<{ providerId: string; onEpisode: boolean; episode?: number; redirect?: string; audio?: 'sub' | 'dub' } | null>
     reportFailure: (url: string, reason: string) => Promise<void>
     episodeCount: (title: string, audio: 'sub' | 'dub', opts?: { titleEn?: string; anilistId?: number }) => Promise<number | null>
-    useLink: (title: string, url: string, ep: number) => Promise<{ ok: boolean; message: string; url?: string; providerId?: string }>
+    useLink: (title: string, url: string, ep: number, opts?: { titleEn?: string; anilistId?: number; audio?: 'sub' | 'dub' }) => Promise<{ ok: boolean; message: string; url?: string; providerId?: string; audioOnPage?: boolean; audio?: 'sub' | 'dub'; audioFallback?: boolean; isSearch?: boolean }>
     clearCache: (title?: string) => Promise<void>
     prefetch: (title: string, titleEn?: string) => Promise<void>
     cancelPrefetch: (title: string) => Promise<void>
@@ -281,6 +284,7 @@ export interface ElectronAPI {
       (webContentsId: number, cmd: { type: 'rate'; rate: number }): Promise<boolean | null>
       (webContentsId: number, cmd: { type: 'quality'; mode: 'max' | 'auto' | 'manual'; index?: number }): Promise<boolean | null>
       (webContentsId: number, cmd: { type: 'seek'; time: number }): Promise<boolean | null>
+      (webContentsId: number, cmd: { type: 'fullscreen' }): Promise<boolean | null>
     }
     onBlocked: (callback: (info: { kind: string; detail: string }) => void) => () => void
   }
@@ -316,6 +320,7 @@ export interface ElectronAPI {
   }
   app: {
     getDataPath: () => Promise<string>
+    setFullscreen: (on: boolean) => Promise<void>
     onDeepLink: (callback: (url: string) => void) => void
   }
 }
