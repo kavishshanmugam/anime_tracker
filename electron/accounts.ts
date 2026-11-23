@@ -129,7 +129,7 @@ async function push(animeId: number): Promise<void> {
       await gqlAniList(s.anilist.token, `mutation ($id: Int, $status: MediaListStatus, $progress: Int, $score: Float, $s: FuzzyDateInput, $c: FuzzyDateInput, $r: Int) {
         SaveMediaListEntry(mediaId: $id, status: $status, progress: $progress, score: $score, startedAt: $s, completedAt: $c, repeat: $r) { id } }`, {
         id: anime.anilist_id, status: entry.rewatch_count > 0 && entry.my_status === 'watching' ? 'REPEATING' : AL_STATUS[entry.my_status] ?? 'PLANNING',
-        progress: entry.progress ?? 0, score: entry.my_score ?? 0, s: fuzzy(entry.started_at), c: fuzzy(entry.finished_at), r: entry.rewatch_count ?? 0,
+        progress: entry.progress ?? 0, score: entry.my_score || undefined /* unscored here: leave the site's score alone */, s: fuzzy(entry.started_at), c: fuzzy(entry.finished_at), r: entry.rewatch_count ?? 0,
       })
       s.anilist.lastSync = Date.now()
     } catch (e: any) { errors.push(`AniList: ${e?.message ?? e}`); s.anilist.lastError = String(e?.message ?? e) }
@@ -138,7 +138,8 @@ async function push(animeId: number): Promise<void> {
     try {
       const token = await malAccessToken(s)
       if (token) {
-        const body = new URLSearchParams({ status: MAL_STATUS[entry.my_status] ?? 'plan_to_watch', num_watched_episodes: String(entry.progress ?? 0), score: String(entry.my_score ?? 0), is_rewatching: String(entry.rewatch_count > 0 && entry.my_status === 'watching') })
+        const body = new URLSearchParams({ status: MAL_STATUS[entry.my_status] ?? 'plan_to_watch', num_watched_episodes: String(entry.progress ?? 0), is_rewatching: String(entry.rewatch_count > 0 && entry.my_status === 'watching') })
+        if (entry.my_score) body.set('score', String(entry.my_score)) // unscored here: leave the site's score alone
         if (entry.started_at) body.set('start_date', entry.started_at)
         if (entry.finished_at) body.set('finish_date', entry.finished_at)
         const r = await net.fetch(`https://api.myanimelist.net/v2/anime/${anime.mal_id}/my_list_status`, {

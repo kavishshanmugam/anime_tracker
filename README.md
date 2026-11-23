@@ -69,6 +69,9 @@ Senpai installs to `%LOCALAPPDATA%\Programs\Senpai\` (per-user, no admin).
      `http://localhost:52713/senpai-mal-callback`. Copy the **Client ID** into Senpai and click **Connect**.
    - Sign-in happens on the official site in a pop-up. After that every status/progress/score/date change syncs
      automatically; **Sync whole library now** pushes everything once.
+   - **Sync is one-way: Senpai → site.** Changes you make on AniList/MyAnimeList are not pulled back, and Senpai's
+     status, progress and dates replace what the site has (a show with no score in Senpai keeps its score on the
+     site). Import your list into Senpai first and check it looks right before connecting.
 5. **Watch something** — open a show and press **Start watching** / **Continue**. On the player, the **⚙** button
    (bottom-right of the video, appears when you move the mouse) has speed, quality, subtitles, Sub/Dub, autoplay and
    auto-skip; the **⛶** button next to it fullscreens the video. **Open in browser** opens the page that's playing in
