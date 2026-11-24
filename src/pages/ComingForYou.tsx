@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { displayTitle } from '@/lib/title'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '@/hooks/useToast'
 import EmptyState from '@/components/EmptyState'
@@ -44,7 +45,7 @@ export default function ComingForYou() {
         progress: 0,
         source: 'franchise',
       })
-      toast(`Added "${fw.related.title}" to plan`)
+      toast(`Added "${displayTitle(fw.related)}" to plan`)
     } catch { toast('Failed to add') }
   }
 
@@ -63,7 +64,8 @@ export default function ComingForYou() {
 
   return (
     <div>
-      <h1 className="mb-6 font-display text-3xl font-black text-text-1">Coming For You</h1>
+      <h1 className="font-display text-3xl font-black text-text-1">Sequels &amp; Spin-offs</h1>
+      <p className="mb-6 mt-1 text-sm text-text-3">Follow-ups to shows you've watched that aren't in your list yet.</p>
       <div className="grid gap-4 md:grid-cols-2">
         {items.map(fw => (
           <div key={fw.id} className="rounded-card border border-border bg-bg-1 p-4">
@@ -72,9 +74,9 @@ export default function ComingForYou() {
               <button onClick={() => navigate(`/anime/${fw.root.id}`)} className="shrink-0 w-20">
                 <div className="aspect-[2/3] overflow-hidden rounded bg-bg-2">
                   {fw.root.cover_url ? (
-                    <img src={fw.root.cover_url} alt={fw.root.title} className="h-full w-full object-cover" />
+                    <img src={fw.root.cover_url} alt={displayTitle(fw.root)} className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full items-center justify-center text-xs text-text-3 p-1">{fw.root.title}</div>
+                    <div className="flex h-full items-center justify-center text-xs text-text-3 p-1">{displayTitle(fw.root)}</div>
                   )}
                 </div>
               </button>
@@ -88,9 +90,9 @@ export default function ComingForYou() {
               <button onClick={() => navigate(`/anime/${fw.related.id}`)} className="shrink-0 w-20">
                 <div className="aspect-[2/3] overflow-hidden rounded bg-bg-2">
                   {fw.related.cover_url ? (
-                    <img src={fw.related.cover_url} alt={fw.related.title} className="h-full w-full object-cover" />
+                    <img src={fw.related.cover_url} alt={displayTitle(fw.related)} className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full items-center justify-center text-xs text-text-3 p-1">{fw.related.title}</div>
+                    <div className="flex h-full items-center justify-center text-xs text-text-3 p-1">{displayTitle(fw.related)}</div>
                   )}
                 </div>
               </button>
@@ -98,9 +100,9 @@ export default function ComingForYou() {
               {/* Info */}
               <div className="flex-1 min-w-0 space-y-1.5">
                 <p className="text-sm text-text-2 line-clamp-1">
-                  You watched <span className="text-text-1 font-medium">{fw.root.title}</span>
+                  You watched <span className="text-text-1 font-medium">{displayTitle(fw.root)}</span>
                 </p>
-                <p className="text-sm text-text-1 font-medium line-clamp-1">{fw.related.title}</p>
+                <p className="text-sm text-text-1 font-medium line-clamp-1">{displayTitle(fw.related)}</p>
                 <div className="flex flex-wrap gap-1.5">
                   <span className="rounded bg-bg-2 px-1.5 py-0.5 text-[11px] text-text-3">
                     {fw.relation_type.replace(/_/g, ' ')}

@@ -127,6 +127,16 @@ export async function getAnimeByMalId(malId: number): Promise<AniListMedia> {
   return data.Media
 }
 
+/** Details for many MAL ids at once (max 50 per call). Ids AniList doesn't know are simply missing from the result. */
+export async function getAnimeByMalIds(malIds: number[]): Promise<AniListMedia[]> {
+  const data = await gql(`
+    query ($ids: [Int]) {
+      Page(perPage: 50) { media(idMal_in: $ids, type: ANIME) { ${MEDIA_FIELDS} } }
+    }
+  `, { ids: malIds })
+  return data.Page?.media ?? []
+}
+
 export async function getAiringSchedule(page: number = 1): Promise<{ schedules: any[]; hasNext: boolean }> {
   const now = Math.floor(Date.now() / 1000)
   const data = await gql(`

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { notInLibrary } from '@/lib/recommend'
 import { useNavigate } from 'react-router-dom'
 import PosterCard from '@/components/PosterCard'
 import { useDubs } from '@/hooks/useDubs'
@@ -31,7 +32,7 @@ export default function Seasonal() {
   const [statusFilter, setStatusFilter] = useState<'' | 'RELEASING' | 'FINISHED'>('')
   const dubOf = useDubs()
 
-  const libraryAnilistIds = useMemo(() => new Set(entries.map(e => e.anilist_id).filter(Boolean)), [entries])
+  const isNew = useMemo(() => notInLibrary(entries), [entries])
 
   useEffect(() => {
     setLoading(true)
@@ -97,7 +98,7 @@ export default function Seasonal() {
       ) : (
         <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
           {shown.map(media => {
-            const inLibrary = libraryAnilistIds.has(media.id)
+            const inLibrary = !isNew(media.id, media.idMal)
             return (
               <PosterCard key={media.id}
                 title={media.title.english ?? media.title.romaji}

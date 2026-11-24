@@ -123,7 +123,7 @@ export function rankRecommendations(
   recsBySource: Map<number, RecNode[]>,
   opts: { exclude?: Set<number>; limit?: number } = {},
 ): Recommendation[] {
-  const inLibrary = new Set(library.map(e => e.anilist_id).filter((x): x is number => !!x))
+  const watched = new Set(library.filter(e => ['completed', 'watching', 'on_hold'].includes(e.entry?.my_status ?? '')).map(e => e.anilist_id).filter((x): x is number => !!x))
   const isNew = notInLibrary(library)
   const exclude = opts.exclude ?? new Set<number>()
   const profile = tasteProfile(library)
@@ -134,9 +134,9 @@ export function rankRecommendations(
     for (const r of recsBySource.get(src.anilist_id!) ?? []) {
       const m = r.media
       if (!m || !isNew(m.id, m.idMal) || exclude.has(m.id)) continue
-      // Skip sequels whose earlier season you haven't seen.
+      // Skip sequels whose earlier season you haven't seen (dropped or only planned doesn't count).
       const prequels = (m.relations?.edges ?? []).filter(x => x.relationType === 'PREQUEL').map(x => x.node.id)
-      if (prequels.length && !prequels.some(id => inLibrary.has(id))) continue
+      if (prequels.length && !prequels.some(id => watched.has(id))) continue
       const strength = 0.4 + 0.6 * Math.min(1, Math.max(0, r.rating) / 40) // AniList votes for this link
       const c = cands.get(m.id) ?? { node: m, support: 0, penalty: 0, because: [] }
       if (negative) c.penalty += Math.abs(w) * strength

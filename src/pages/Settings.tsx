@@ -356,8 +356,8 @@ export default function Settings() {
 
       {/* Enrich library */}
       <section className="space-y-2">
-        <h2 className="font-display text-base font-semibold text-text-1">Enrich Library</h2>
-        <p className="text-sm text-text-3">Fetch cover art, genres, and metadata from AniList for entries that are missing it.</p>
+        <h2 className="font-display text-base font-semibold text-text-1">Covers &amp; Details</h2>
+        <p className="text-sm text-text-3">Shows imported from a list start without cover art or details. This fetches them from AniList (it also runs automatically after an import).</p>
         {enriching ? (
           <div className="space-y-1">
             <div className="h-2 w-full overflow-hidden rounded-full bg-bg-2">
@@ -371,7 +371,7 @@ export default function Settings() {
           <button
             onClick={handleEnrich}
             className="rounded-card border border-border px-4 py-2 text-sm text-text-2 hover:bg-bg-1"
-          >Enrich bare entries</button>
+          >Fetch missing covers &amp; details</button>
         )}
       </section>
 

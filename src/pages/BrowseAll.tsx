@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { notInLibrary } from '@/lib/recommend'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import PosterCard from '@/components/PosterCard'
 import EmptyState from '@/components/EmptyState'
@@ -112,7 +113,8 @@ export default function BrowseAll() {
     return () => clearTimeout(t)
   }, [searchInput]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const inLists = useMemo(() => new Set(entries.map(e => e.anilist_id).filter(Boolean)), [entries])
+  const isNew = useMemo(() => notInLibrary(entries), [entries])
+  const inLists = { has: (m: { id: number; idMal?: number | null }) => !isNew(m.id, m.idMal) }
   const years = Array.from({ length: new Date().getFullYear() + 2 - 1970 }, (_, i) => new Date().getFullYear() + 1 - i)
 
   const addToWatchlist = async (m: Media) => {
@@ -183,11 +185,11 @@ export default function BrowseAll() {
                 synopsis={m.description}
                 meta={[m.format ?? '', m.episodes ? `${m.episodes} eps` : '', m.seasonYear ? String(m.seasonYear) : '', m.meanScore ? `★ ${m.meanScore}%` : '']}
                 dub={dubOf(m.idMal, m.status)}
-                subtitle={inLists.has(m.id) ? <span className="text-accent">In your lists</span>
+                subtitle={inLists.has(m) ? <span className="text-accent">In your lists</span>
                   : [m.status === 'RELEASING' ? 'Airing' : m.status === 'NOT_YET_RELEASED' ? 'Upcoming' : null, m.genres.slice(0, 2).join(' · ')].filter(Boolean).join(' · ')}
                 onClick={() => navigate(`/anime/${m.id}`)}
-                onBookmark={inLists.has(m.id) ? undefined : () => addToWatchlist(m)}
-                bookmarked={inLists.has(m.id)}
+                onBookmark={inLists.has(m) ? undefined : () => addToWatchlist(m)}
+                bookmarked={inLists.has(m)}
               />
             ))}
           </div>

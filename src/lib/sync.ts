@@ -1,4 +1,4 @@
-import { getAnimeById, mapAniListToAnime, getAnimeByMalId } from './anilist'
+import { getAnimeById, mapAniListToAnime, getAnimeByMalIds } from './anilist'
 import type { Anime } from '@/types'
 import { displayTitle } from '@/lib/title'
 
@@ -163,7 +163,7 @@ export async function detectFranchiseEntries(anime: Anime): Promise<{ added: num
     notifications.push({
       type: 'sequel',
       title: 'Sequel Available',
-      body: `${relAnime.title} (${rel.type.replace(/_/g, ' ').toLowerCase()}) of ${displayTitle(anime)}`,
+      body: `${displayTitle(relAnime)} (${rel.type.replace(/_/g, ' ').toLowerCase()}) of ${displayTitle(anime)}`,
       animeId: relAnime.id,
     })
   }
@@ -182,16 +182,18 @@ export async function enrichBareEntries(
   if (!bare.length) return 0
 
   let enriched = 0
-  for (const anime of bare) {
+  for (let i = 0; i < bare.length; i += 50) {
+    const ids = bare.slice(i, i + 50).map(a => a.mal_id!)
     try {
-      const media = await getAnimeByMalId(anime.mal_id!)
-      const mapped = mapAniListToAnime(media)
-      await window.api.db.upsertAnime({ ...mapped, mal_id: anime.mal_id })
-      enriched++
+      for (const media of await getAnimeByMalIds(ids)) {
+        if (!media.idMal) continue
+        await window.api.db.upsertAnime({ ...mapAniListToAnime(media), mal_id: media.idMal })
+        enriched++
+      }
     } catch {
-      // AniList might not have this MAL entry, skip
+      // offline / rate-limited: the rest stays bare and can be retried from Settings
     }
-    onProgress?.(enriched, bare.length)
+    onProgress?.(Math.min(i + 50, bare.length), bare.length)
   }
   return enriched
 }
