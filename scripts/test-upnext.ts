@@ -7,6 +7,7 @@ import { parseMALExport } from '../src/lib/mal-import'
 import { tasteWeight, rankRecommendations, type RecNode } from '../src/lib/recommend'
 import { dubStatus, dubChanges, loadDubs } from '../src/lib/dubs'
 import type { AnimeWithEntry } from '../src/types'
+import { autoStatus } from '../electron/auto-status'
 
 let passed = 0, failed = 0
 function test(name: string, fn: () => void) {
@@ -192,6 +193,20 @@ console.log('\n[Recommendations]')
     const r = rankRecommendations([...library, imported], new Map([[1, [node(media(105, ['Fantasy'], { idMal: 34572 })), node(media(100, ['Fantasy']))]]]))
     assert.deepEqual(r.map(x => x.anilistId), [100])
   })
+}
+
+console.log('\n[Status follows progress]')
+{
+  const cur = (my_status: string, progress = 0) => ({ my_status, progress, started_at: null, finished_at: null })
+  const run = (data: any, current: any, total: number | null = 12, airing = 'FINISHED') => autoStatus({ data, current, episodesTotal: total, airingStatus: airing, today: '2026-11-24' })
+  test('first episode of a watchlist show → Watching, start date set', () =>
+    assert.deepEqual(run({ progress: 1 }, cur('plan_to_watch')), { my_status: 'watching', started_at: '2026-11-24' }))
+  test('last episode → Completed with finish date', () =>
+    assert.deepEqual(run({ progress: 12 }, { ...cur('watching', 11), started_at: '2026-01-01' }), { my_status: 'completed', finished_at: '2026-11-24' }))
+  test('caught up on a show that is still airing stays Watching', () => assert.deepEqual(run({ progress: 12 }, { ...cur('watching', 11), started_at: 'x' }, 12, 'RELEASING'), {}))
+  test('an explicit status choice is never overridden', () => assert.deepEqual(run({ progress: 12, my_status: 'dropped' }, cur('watching', 3)), {}))
+  test('edits that do not touch progress change nothing', () => assert.deepEqual(run({ my_score: 8 }, cur('plan_to_watch')), {}))
+  test('new entry with progress → Watching', () => assert.deepEqual(run({ progress: 3 }, null), { my_status: 'watching', started_at: '2026-11-24' }))
 }
 
 // ---------- English dub status (MAL-Dubs list) ----------

@@ -67,6 +67,7 @@ export default function Watch() {
   const resumeTriesRef = useRef(0)
   const [videoFs, setVideoFs] = useState(false)
   const videoFsRef = useRef(false)
+  const startedRef = useRef(false)
   const toggleFullscreenRef = useRef<() => void>(() => {})
   videoFsRef.current = videoFs
   const lastSaveRef = useRef(0)
@@ -260,6 +261,22 @@ export default function Watch() {
     } catch { /* non-fatal */ }
   }, [id, epNum, totalEps])
 
+  /** The episode is really playing: a show you hadn't started (or had shelved) becomes Watching right away. */
+  const markStarted = useCallback(async () => {
+    if (!id || startedRef.current) return
+    startedRef.current = true
+    try {
+      const entry = await window.api?.db.getLibraryEntry(Number(id))
+      if (entry && !['plan_to_watch', 'on_hold', 'dropped'].includes(entry.my_status)) return
+      const now = new Date().toISOString()
+      await window.api?.db.upsertLibraryEntry({
+        anime_id: Number(id), my_status: 'watching', last_watched_at: now,
+        ...(entry ? {} : { source: 'in-app', progress: 0 }), ...(entry?.started_at ? {} : { started_at: now.split('T')[0] }),
+      })
+      setNotice('Added to Watching')
+    } catch { /* non-fatal */ }
+  }, [id])
+
   // Poll the in-page controller (reaches cross-origin player iframes via the main process).
   useEffect(() => {
     if (!onEpisodePage) { setPlayer(null); return }
@@ -334,6 +351,7 @@ export default function Watch() {
       if (info.events.length) setNotice(info.events[info.events.length - 1])
       setActiveSkip(skips.find(sk => info.time >= sk.startTime && info.time < sk.endTime) ?? null)
       if (resumeTargetRef.current !== undefined) { // undefined = a pre-roll ad is still in front of the episode
+        if (!info.paused && info.time > 20) markStarted()
         if (info.time / info.duration > 0.85) markWatched()
         if (info.time / info.duration > 0.92) clearResume(animeId, epNum)
       }

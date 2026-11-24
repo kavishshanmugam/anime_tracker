@@ -3,6 +3,7 @@ import { app, dialog } from 'electron'
 import fs from 'fs'
 import initSqlJs, { type Database } from 'sql.js'
 import zlib from 'node:zlib'
+import { autoStatus } from './auto-status'
 
 let db: Database
 
@@ -287,7 +288,10 @@ export function registerAllHandlers(ipcMain: IpcMain): void {
     // status/progress/rewatch count to defaults). New entry: insert with defaults.
     const ENTRY_COLS = ['my_status', 'my_score', 'progress', 'rewatch_count', 'started_at', 'finished_at',
       'last_watched_at', 'notes', 'custom_tags', 'source'] as const
-    const existing = query('SELECT id FROM library_entry WHERE anime_id = ?', [data.anime_id])
+    const existing = query('SELECT id, my_status, progress, started_at, finished_at FROM library_entry WHERE anime_id = ?', [data.anime_id])
+    // Status follows progress (start → Watching, last episode → Completed) unless the caller picked a status.
+    const show = query('SELECT episodes_total, airing_status FROM anime WHERE id = ?', [data.anime_id])[0]
+    data = { ...data, ...autoStatus({ data, current: existing[0] ?? null, episodesTotal: show?.episodes_total, airingStatus: show?.airing_status, today: new Date().toISOString().split('T')[0] }) }
     if (existing.length) {
       const cols = ENTRY_COLS.filter(c => data[c] !== undefined)
       if (cols.length) {

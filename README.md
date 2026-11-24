@@ -4,6 +4,7 @@ A local-first desktop app that tracks your anime watching, syncs airing schedule
 
 ## Features
 
+- **Automatic status** — start playing a show and it moves to Watching; watch (or tick off) the last episode and it becomes Completed with the dates filled in. Choosing a status yourself always wins
 - **My List** — a MyAnimeList-style table of everything you've watched, are watching or plan to watch (tabs per status with counts; score, +1 episode and Watch/Rewatch on every row; poster grid view optional), with notes and progress tracking
 - **MAL / AniList import** — One-time migration from MyAnimeList XML export or AniList username
 - **Airing calendar** — Week and month views showing upcoming episodes for your shows (highlighted), plus the 20 most popular shows airing right now (can be switched off)
