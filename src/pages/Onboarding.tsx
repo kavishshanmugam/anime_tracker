@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { parseMALExport, type MALImportResult } from '@/lib/mal-import'
 import { enrichBareEntries } from '@/lib/sync'
+import { saveProfile } from '@/hooks/useProfile'
 import type { MyStatus } from '@/types'
 
 const STATUS_LABELS: Record<MyStatus, string> = {
@@ -20,6 +21,8 @@ export default function Onboarding({ onSkip }: { onSkip?: () => void }) {
   const [importProgress, setImportProgress] = useState(0)
   const [importedCount, setImportedCount] = useState(0)
   const [fileError, setFileError] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const saveName = () => { if (name.trim()) saveProfile({ name: name.trim() }).catch(() => {}) }
 
   const handleSelectFile = async () => {
     if (!window.api) return
@@ -106,15 +109,21 @@ export default function Onboarding({ onSkip }: { onSkip?: () => void }) {
           <div className="text-center space-y-6">
             <h1 className="font-display text-3xl font-bold text-text-1">Welcome to Senpai</h1>
             <p className="text-text-2">Let's set up your anime library.</p>
+            <div className="space-y-1.5 text-left">
+              <label htmlFor="onboarding-name" className="text-xs font-semibold uppercase tracking-wide text-text-3">What should we call you? <span className="font-normal normal-case">(optional)</span></label>
+              <input id="onboarding-name" type="text" value={name} maxLength={30} autoFocus placeholder="Your name" onChange={e => setName(e.target.value)}
+                className="w-full rounded-card border border-border bg-bg-1 px-3 py-2.5 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none" />
+            </div>
             <div className="space-y-3">
               <button
-                onClick={() => setStep(1)}
+                onClick={() => { saveName(); setStep(1) }}
                 className="w-full rounded-card bg-accent py-3 text-sm font-medium text-text-1 hover:bg-accent-hover transition-colors"
               >Import from MyAnimeList</button>
               <button
-                onClick={() => { onSkip?.(); navigate('/') }}
-                className="text-sm text-text-3 hover:text-text-1 transition-colors"
-              >Start fresh</button>
+                onClick={() => { saveName(); onSkip?.(); navigate('/') }}
+                className="w-full rounded-card border border-border py-3 text-sm font-medium text-text-2 transition-colors hover:bg-bg-1 hover:text-text-1"
+              >Start with an empty list</button>
+              <p className="text-xs text-text-3">You can import later from Settings → Library &amp; Data.</p>
             </div>
           </div>
         )}

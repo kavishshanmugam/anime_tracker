@@ -4,9 +4,12 @@ import { SkeletonText } from '@/components/Skeleton'
 import { syncAiringSchedules } from '@/lib/sync'
 import type { Anime, AiringScheduleItem } from '@/types'
 import { displayTitle } from '@/lib/title'
+import { getPopularAiring, type PopularAiring } from '@/lib/anilist'
 
 type AiringEntry = AiringScheduleItem & { anime: Anime }
 type View = 'week' | 'month'
+/** One episode in a day cell — from your lists, or a popular show that's airing. */
+interface DayItem { key: string; title: string; cover: string | null; episode: number; at: string; mine: boolean; to: string }
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -36,6 +39,9 @@ export default function Calendar() {
   const [syncing, setSyncing] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const syncedOnce = useRef(false)
+  const [popular, setPopular] = useState<PopularAiring[]>([])
+  const [showPopular, setShowPopularState] = useState(() => { try { return localStorage.getItem('calendar_popular') !== 'off' } catch { return true } })
+  const setShowPopular = (on: boolean) => { setShowPopularState(on); try { localStorage.setItem('calendar_popular', on ? 'on' : 'off') } catch { /* */ } }
   const today = new Date()
 
   useEffect(() => { try { localStorage.setItem('calendar_view', view) } catch { /* */ } }, [view])
@@ -64,16 +70,30 @@ export default function Calendar() {
     syncAiringSchedules().finally(() => { fetchSchedule(); setSyncing(false) })
   }, [fetchSchedule])
 
+  // Popular shows airing in the visible range (so the calendar is useful even when nothing of yours is airing).
+  useEffect(() => {
+    if (!showPopular) return
+    let cancelled = false
+    getPopularAiring(start, addDays(end, 1)).then(p => { if (!cancelled) setPopular(p) }).catch(() => { /* offline: your shows only */ })
+    return () => { cancelled = true }
+  }, [showPopular, start, end])
+
   const byDay = useMemo(() => {
-    const m = new Map<string, AiringEntry[]>()
+    const m = new Map<string, DayItem[]>()
+    const add = (it: DayItem) => { const k = new Date(it.at).toDateString(); (m.get(k) ?? m.set(k, []).get(k)!).push(it) }
+    const mine = new Set<string>()
     for (const it of items) {
-      const d = new Date(it.airing_at)
-      const k = d.toDateString()
-      ;(m.get(k) ?? m.set(k, []).get(k)!).push(it)
+      if (it.anime.anilist_id) mine.add(`${it.anime.anilist_id}:${it.episode}`)
+      add({ key: `m${it.anime_id}-${it.episode}`, title: displayTitle(it.anime), cover: it.anime.cover_url, episode: it.episode, at: it.airing_at, mine: true, to: `/anime/${it.anime_id}` })
     }
-    for (const list of m.values()) list.sort((a, b) => a.airing_at.localeCompare(b.airing_at))
+    if (showPopular) for (const p of popular) {
+      if (mine.has(`${p.anilistId}:${p.episode}`)) continue
+      add({ key: `p${p.anilistId}-${p.episode}`, title: p.title, cover: p.cover, episode: p.episode, at: p.airingAt, mine: false, to: `/anime/${p.anilistId}` })
+    }
+    // Your shows first, then by time.
+    for (const list of m.values()) list.sort((a, b) => Number(b.mine) - Number(a.mine) || a.at.localeCompare(b.at))
     return m
-  }, [items])
+  }, [items, popular, showPopular])
 
   const step = (dir: 1 | -1) => setAnchor(a => view === 'week' ? addDays(a, 7 * dir) : new Date(a.getFullYear(), a.getMonth() + dir, 1))
   const title = view === 'week'
@@ -82,14 +102,14 @@ export default function Calendar() {
   const btn = 'rounded-card border border-border px-3 py-1 text-sm text-text-2 hover:bg-bg-1'
   const todayItems = byDay.get(today.toDateString()) ?? []
 
-  const entryButton = (it: AiringEntry, compact: boolean) => (
-    <button key={`${it.anime_id}-${it.episode}`} onClick={() => navigate(`/anime/${it.anime_id}`)}
-      className="flex w-full items-center gap-1.5 rounded bg-bg-2 p-1 text-left transition-colors hover:bg-bg-0"
-      title={`${displayTitle(it.anime)} — E${it.episode} at ${time(it.airing_at)}`}>
-      {!compact && it.anime.cover_url && <img src={it.anime.cover_url} alt="" className="h-8 w-6 shrink-0 rounded object-cover" />}
+  const entryButton = (it: DayItem, compact: boolean) => (
+    <button key={it.key} onClick={() => navigate(it.to)}
+      className={`flex w-full items-center gap-1.5 rounded border-l-2 p-1 text-left transition-colors hover:bg-bg-0 ${it.mine ? 'border-accent bg-accent/10' : 'border-transparent bg-bg-2'}`}
+      title={`${it.title} — E${it.episode} at ${time(it.at)}${it.mine ? ' · in your lists' : ' · popular this season'}`}>
+      {!compact && it.cover && <img src={it.cover} alt="" className="h-8 w-6 shrink-0 rounded object-cover" />}
       <div className="min-w-0 flex-1">
-        <p className={`${compact ? 'text-[10px]' : 'text-[11px]'} truncate font-medium text-text-1`}>{displayTitle(it.anime)}</p>
-        <p className="text-[10px] text-text-3">E{it.episode} · {time(it.airing_at)}</p>
+        <p className={`${compact ? 'text-[10px]' : 'text-[11px]'} truncate font-medium ${it.mine ? 'text-text-1' : 'text-text-2'}`}>{it.title}</p>
+        <p className="text-[10px] text-text-3">E{it.episode} · {time(it.at)}</p>
       </div>
     </button>
   )
@@ -114,11 +134,14 @@ export default function Calendar() {
         </div>
       </div>
 
-      {!loading && items.length === 0 && (
-        <p className="mb-3 text-xs text-text-3">
-          Nothing airing in this {view} from your lists. The calendar shows episodes of shows you're watching or planning to watch that are still airing.
-        </p>
-      )}
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-3">
+        <span className="flex items-center gap-1.5"><span className="h-3 w-1 rounded bg-accent" />Your shows (watching or on your watchlist)</span>
+        <label className="flex cursor-pointer items-center gap-1.5 hover:text-text-1">
+          <input type="checkbox" checked={showPopular} onChange={e => setShowPopular(e.target.checked)} className="accent-[var(--accent,#7c6cf0)]" />
+          Also show the 20 most popular shows airing now
+        </label>
+        {!loading && items.length === 0 && <span>· Nothing from your lists is airing this {view}.</span>}
+      </div>
 
       <div className="grid grid-cols-7 gap-1.5 text-center">
         {DAY_NAMES.map(d => <div key={d} className="pb-1 text-xs font-semibold uppercase tracking-wide text-text-3">{d}</div>)}
@@ -160,12 +183,12 @@ export default function Calendar() {
           <h2 className="mb-3 font-display text-lg font-bold text-text-1">Airing Today</h2>
           <div className="flex gap-3 overflow-x-auto pb-1">
             {todayItems.map(it => (
-              <button key={`t-${it.anime_id}-${it.episode}`} onClick={() => navigate(`/anime/${it.anime_id}`)}
-                className="flex shrink-0 items-center gap-3 rounded-card border border-border bg-bg-1 p-3 transition-colors hover:bg-bg-2">
-                {it.anime.cover_url && <img src={it.anime.cover_url} alt="" className="h-14 w-10 rounded object-cover" />}
+              <button key={`t-${it.key}`} onClick={() => navigate(it.to)}
+                className={`flex shrink-0 items-center gap-3 rounded-card border bg-bg-1 p-3 transition-colors hover:bg-bg-2 ${it.mine ? 'border-accent' : 'border-border'}`}>
+                {it.cover && <img src={it.cover} alt="" className="h-14 w-10 rounded object-cover" />}
                 <div className="text-left">
-                  <p className="text-sm font-medium text-text-1">{displayTitle(it.anime)}</p>
-                  <p className="text-xs text-text-3">Episode {it.episode} · {time(it.airing_at)}</p>
+                  <p className="text-sm font-medium text-text-1">{it.title}</p>
+                  <p className="text-xs text-text-3">Episode {it.episode} · {time(it.at)}{it.mine ? ' · in your lists' : ''}</p>
                 </div>
               </button>
             ))}

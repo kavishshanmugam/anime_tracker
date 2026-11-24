@@ -153,6 +153,39 @@ export async function getAiringSchedule(page: number = 1): Promise<{ schedules: 
   return { schedules: data.Page.airingSchedules, hasNext: data.Page.pageInfo.hasNextPage }
 }
 
+export interface PopularAiring { anilistId: number; title: string; cover: string | null; episode: number; airingAt: string }
+let popularIds: Promise<number[]> | null = null
+const popularByRange = new Map<string, PopularAiring[]>()
+
+/** Episodes of the 20 most popular currently-airing shows between two dates (cached per range for the session). */
+export async function getPopularAiring(from: Date, to: Date): Promise<PopularAiring[]> {
+  const key = `${from.toISOString()}|${to.toISOString()}`
+  const hit = popularByRange.get(key)
+  if (hit) return hit
+  popularIds ??= gql(`query { Page(perPage: 20) { media(status: RELEASING, type: ANIME, isAdult: false, sort: POPULARITY_DESC) { id } } }`)
+    .then(d => d.Page.media.map((m: { id: number }) => m.id))
+  popularIds.catch(() => { popularIds = null }) // offline now → try again next time
+  const ids = await popularIds
+  const out: PopularAiring[] = []
+  for (let page = 1; page <= 4; page++) { // 20 shows x 6 weeks fits in 3 pages; 4 is the ceiling
+    const data = await gql(`
+      query ($ids: [Int], $from: Int, $to: Int, $page: Int) {
+        Page(page: $page, perPage: 50) {
+          pageInfo { hasNextPage }
+          airingSchedules(mediaId_in: $ids, airingAt_greater: $from, airingAt_lesser: $to, sort: TIME) {
+            episode airingAt media { id title { romaji english } coverImage { large } }
+          }
+        }
+      }
+    `, { ids, from: Math.floor(from.getTime() / 1000), to: Math.floor(to.getTime() / 1000), page })
+    for (const s of data.Page.airingSchedules)
+      out.push({ anilistId: s.media.id, title: s.media.title.english ?? s.media.title.romaji, cover: s.media.coverImage?.large ?? null, episode: s.episode, airingAt: new Date(s.airingAt * 1000).toISOString() })
+    if (!data.Page.pageInfo.hasNextPage) break
+  }
+  popularByRange.set(key, out)
+  return out
+}
+
 export async function getSeasonAnime(season: string, year: number): Promise<AniListMedia[]> {
   const data = await gql(`
     query ($season: MediaSeason, $year: Int) {

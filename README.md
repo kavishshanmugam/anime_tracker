@@ -6,7 +6,7 @@ A local-first desktop app that tracks your anime watching, syncs airing schedule
 
 - **My List** — a MyAnimeList-style table of everything you've watched, are watching or plan to watch (tabs per status with counts; score, +1 episode and Watch/Rewatch on every row; poster grid view optional), with notes and progress tracking
 - **MAL / AniList import** — One-time migration from MyAnimeList XML export or AniList username
-- **Airing calendar** — Week and month views showing upcoming episodes for your shows
+- **Airing calendar** — Week and month views showing upcoming episodes for your shows (highlighted), plus the 20 most popular shows airing right now (can be switched off)
 - **Season watchdog** — Automatically detects sequels and spin-offs for shows you've watched
 - **Recommendations** — For You + a Home row: learns from what you complete (no ratings needed; low scores and drops count against similar shows), combines AniList recommendations across your favourites with your genre/tag taste, explains each pick, and filters by genre, Sub/Dub, airing and hidden gems; shows already in your lists (matched by AniList or MAL id) are never recommended, and Home's discovery rows skip what you've finished or dropped
 - **Seasonal browser** — Browse what's airing each season
