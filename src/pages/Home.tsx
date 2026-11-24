@@ -84,7 +84,15 @@ export default function Home() {
     .filter(e => e.entry?.my_status === 'completed')
     .sort((a, b) => (b.entry?.finished_at ?? b.entry?.last_watched_at ?? '').localeCompare(a.entry?.finished_at ?? a.entry?.last_watched_at ?? ''))
     .slice(0, 20), [entries])
-  const libraryByAnilist = useMemo(() => new Map(entries.filter(e => e.anilist_id).map(e => [e.anilist_id!, e])), [entries])
+  const libraryByAnilist = useMemo(() => {
+    const byAl = new Map(entries.filter(e => e.anilist_id).map(e => [e.anilist_id!, e]))
+    const byMal = new Map(entries.filter(e => e.mal_id).map(e => [e.mal_id!, e]))
+    // MAL imports have no AniList id until their details are fetched — fall back to the MAL id.
+    const of = (m: { id: number; idMal?: number | null }) => byAl.get(m.id) ?? (m.idMal ? byMal.get(m.idMal) : undefined)
+    return { get: of, has: (m: { id: number; idMal?: number | null }) => !!of(m) }
+  }, [entries])
+  /** Discovery shelves skip what you've already finished or dropped. */
+  const unseen = (m: AniListMedia) => { const s = libraryByAnilist.get(m)?.entry?.my_status; return s !== 'completed' && s !== 'dropped' }
 
   // Episode thumbnails for Continue Watching.
   useEffect(() => {
@@ -95,7 +103,7 @@ export default function Home() {
   }, [continueWatching]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const addToWatchlist = async (media: AniListMedia) => {
-    if (libraryByAnilist.has(media.id)) { toast('Already in your lists'); return }
+    if (libraryByAnilist.has(media)) { toast('Already in your lists'); return }
     try {
       const id = await ensureLocal(media)
       await window.api.db.upsertLibraryEntry({ anime_id: id, my_status: 'plan_to_watch', progress: 0, source: 'home' })
@@ -105,7 +113,7 @@ export default function Home() {
   }
 
   const playMedia = async (media: AniListMedia) => {
-    const local = libraryByAnilist.get(media.id)
+    const local = libraryByAnilist.get(media)
     if (local) { navigate(watchPath(local, (local.entry?.progress ?? 0) + 1)); return }
     try {
       const id = await ensureLocal(media)
@@ -158,10 +166,10 @@ export default function Home() {
         tag: <span className="rounded bg-accent/20 px-2 py-1 text-xs font-bold uppercase tracking-wide text-accent">Up next</span>,
       })
     }
-    for (const m of trending.filter(x => x.bannerImage)) {
+    for (const m of trending.filter(x => x.bannerImage && unseen(x))) {
       if (out.length >= 6) break
       if (out.some(o => o.title === (m.title.english ?? m.title.romaji))) continue
-      const local = libraryByAnilist.get(m.id)
+      const local = libraryByAnilist.get(m)
       out.push({
         key: `t${m.id}`, title: m.title.english ?? m.title.romaji, banner: m.bannerImage, cover: m.coverImage.extraLarge ?? m.coverImage.large,
         synopsis: m.description,
@@ -179,7 +187,7 @@ export default function Home() {
 
 
   const mediaPoster = (m: AniListMedia) => {
-    const local = libraryByAnilist.get(m.id)
+    const local = libraryByAnilist.get(m)
     return (
       <PosterCard key={m.id} width="w-[170px] lg:w-[190px]"
         title={m.title.english ?? m.title.romaji}
@@ -315,11 +323,11 @@ export default function Home() {
 
         {season.length > 0 && (
           <Shelf title={`Popular in ${titleCase(sName)} ${year}`} subtitle="Airing this season" viewAll="/seasonal">
-            {[...season].sort((a, b) => (b.meanScore ?? 0) - (a.meanScore ?? 0)).slice(0, 24).map(mediaPoster)}
+            {season.filter(unseen).sort((a, b) => (b.meanScore ?? 0) - (a.meanScore ?? 0)).slice(0, 24).map(mediaPoster)}
           </Shelf>
         )}
 
-        {trending.length > 0 && <Shelf title="Trending Now">{trending.map(mediaPoster)}</Shelf>}
+        {trending.length > 0 && <Shelf title="Trending Now">{trending.filter(unseen).map(mediaPoster)}</Shelf>}
 
         {recentlyFinished.length > 0 && (
           <Shelf title="Watch Again" subtitle="Recently completed" viewAll="/library?status=completed">{recentlyFinished.map(libraryPoster)}</Shelf>

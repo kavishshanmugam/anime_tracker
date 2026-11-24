@@ -14,6 +14,8 @@ import { useDubs } from '@/hooks/useDubs'
 import type { MyStatus, Anime } from '@/types'
 import { displayTitle } from '@/lib/title'
 import { announceCompleted } from '@/components/FinishedModal'
+import { watchPath } from '@/lib/watch'
+import { progressAfterWatching } from '@/lib/progress'
 
 type SortKey = 'last_updated' | 'title' | 'score' | 'progress'
 type ViewMode = 'grid' | 'list'
@@ -46,7 +48,9 @@ export default function Library() {
   // Re-sync filter when URL param changes (e.g. back/forward navigation)
   useEffect(() => { setStatusFilter(urlStatus) }, [urlStatus])
   const [sortKey, setSortKey] = useState<SortKey>('last_updated')
-  const [view, setView] = useState<ViewMode>('grid')
+  // MAL-style table by default; your choice is remembered.
+  const [view, setViewState] = useState<ViewMode>(() => { try { return localStorage.getItem('library_view') === 'grid' ? 'grid' : 'list' } catch { return 'list' } })
+  const setView = (v: ViewMode) => { setViewState(v); try { localStorage.setItem('library_view', v) } catch { /* private mode */ } }
   const [search, setSearch] = useState('')
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -156,6 +160,14 @@ export default function Library() {
     announceCompleted(anime.id)
   }
 
+  /** +1 episode straight from the list (finishing the last one completes the show). */
+  const handlePlusOne = async (anime: Anime & { entry: any }) => {
+    const patch = progressAfterWatching({ entry: anime.entry, episode: (anime.entry.progress ?? 0) + 1, episodesTotal: anime.episodes_total })
+    if (!patch) return
+    await updateEntry(anime.id, patch)
+    if (patch.my_status === 'completed') announceCompleted(anime.id)
+  }
+
   const handleRemove = async (anime: Anime) => {
     await deleteEntry(anime.id)
     toast(`${displayTitle(anime)} removed`)
@@ -187,7 +199,7 @@ export default function Library() {
     <div className="flex flex-col h-full">
       {/* Header + tabs */}
       <div className="sticky top-[60px] z-20 -mx-4 space-y-4 bg-bg-0/95 px-4 pt-2 pb-3 backdrop-blur lg:-mx-10 lg:px-10">
-        <h1 className="font-display text-3xl font-black text-text-1">My Lists</h1>
+        <h1 className="font-display text-3xl font-black text-text-1">My List</h1>
         <div className="flex items-center gap-6 overflow-x-auto border-b border-border">
           {STATUS_TABS.map(tab => (
             <button
@@ -205,7 +217,7 @@ export default function Library() {
         </div>
 
         {/* Controls row */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <input
             type="text"
             placeholder="Search library..."
@@ -321,7 +333,12 @@ export default function Library() {
         ) : (
           /* List view */
           <div className="space-y-1">
-            {filtered.map(item => (
+            <div className="flex items-center gap-4 border-b border-border px-3 pb-2 text-[11px] font-bold uppercase tracking-wide text-text-3">
+              <span className="w-7 text-right">#</span><span className="w-10" /><span className="flex-1">Title</span>
+              <span className="w-16 text-center">Score</span><span className="w-16 text-center">Type</span>
+              <span className="w-40">Progress</span><span className="w-24" /><span className="w-5" />
+            </div>
+            {filtered.map((item, i) => (
               <div
                 key={item.id}
                 role="button"
@@ -337,20 +354,37 @@ export default function Library() {
                     {selected.has(item.id) && <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" fill="none"/></svg>}
                   </div>
                 )}
-                <div className="h-12 w-8 shrink-0 overflow-hidden rounded bg-bg-2">
-                  {item.cover_url && <img src={item.cover_url} alt="" className="h-full w-full object-cover" />}
+                <span className="w-7 shrink-0 text-right font-mono text-xs text-text-3">{i + 1}</span>
+                <div className="h-14 w-10 shrink-0 overflow-hidden rounded bg-bg-2">
+                  {item.cover_url && <img src={item.cover_url} alt="" loading="lazy" className="h-full w-full object-cover" />}
                 </div>
-                <p className="flex-1 text-sm font-medium text-text-1 line-clamp-1">{displayTitle(item)}</p>
-                <StatusBadge status={item.entry.my_status} />
-                <div className="w-32" onClick={e => e.stopPropagation()}>
-                  <ProgressBar current={item.entry.progress} total={item.episodes_total} />
+                <div className="min-w-0 flex-1">
+                  <p className="line-clamp-1 text-sm font-semibold text-text-1">{displayTitle(item)}</p>
+                  <div className="mt-0.5 flex items-center gap-2 text-xs text-text-3">
+                    {statusFilter === 'all' && <StatusBadge status={item.entry.my_status} />}
+                    <span>{[item.season_year, item.airing_status === 'RELEASING' ? 'Airing' : ''].filter(Boolean).join(' · ')}</span>
+                  </div>
                 </div>
-                <span className="w-10 text-center text-sm text-text-2 font-mono">
-                  {item.entry.my_score || '-'}
-                </span>
-                <span className="w-20 text-xs text-text-3 text-right">
-                  {item.entry.last_watched_at ? new Date(item.entry.last_watched_at).toLocaleDateString() : '-'}
-                </span>
+                <select
+                  value={item.entry.my_score || ''} title="Your score"
+                  onClick={e => e.stopPropagation()}
+                  onChange={e => updateEntry(item.id, { my_score: e.target.value ? Number(e.target.value) : null })}
+                  className="w-16 shrink-0 rounded border border-transparent bg-transparent px-1 py-1 text-center font-mono text-sm text-text-1 hover:border-border focus:border-accent focus:outline-none"
+                >
+                  <option value="">-</option>
+                  {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <span className="w-16 shrink-0 text-center text-xs text-text-2">{({ TV: 'TV', TV_SHORT: 'Short', MOVIE: 'Movie', SPECIAL: 'Special', OVA: 'OVA', ONA: 'ONA', MUSIC: 'Music' } as Record<string, string>)[item.format ?? ''] ?? '-'}</span>
+                <div className="w-40 shrink-0" onClick={e => e.stopPropagation()}>
+                  <ProgressBar current={item.entry.progress} total={item.episodes_total}
+                    onIncrement={item.entry.my_status !== 'completed' && (!item.episodes_total || item.entry.progress < item.episodes_total) ? () => handlePlusOne(item) : undefined} />
+                </div>
+                {!selectMode ? (
+                  <button
+                    onClick={e => { e.stopPropagation(); const done = item.entry.my_status === 'completed' || (!!item.episodes_total && item.entry.progress >= item.episodes_total); navigate(watchPath(item, done ? 1 : item.entry.progress + 1)) }}
+                    className="w-24 shrink-0 rounded-card border border-border px-2 py-1.5 text-xs font-semibold text-text-1 transition-colors hover:border-accent hover:bg-accent"
+                  >▶ {item.entry.my_status === 'completed' ? 'Rewatch' : item.entry.progress > 0 ? `Ep ${item.entry.progress + 1}` : 'Watch'}</button>
+                ) : <span className="w-24 shrink-0" />}
                 {/* list row menu */}
                 {!selectMode && (
                   <div className="relative">

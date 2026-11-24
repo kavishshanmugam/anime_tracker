@@ -110,6 +110,13 @@ export function pickSources(library: AnimeWithEntry[], maxLiked = 25, maxDislike
   return { liked, disliked }
 }
 
+/** True for shows that are NOT in your lists. MAL imports have no AniList id until their details are fetched, so match on either id. */
+export function notInLibrary(library: AnimeWithEntry[]) {
+  const al = new Set(library.map(e => e.anilist_id).filter(Boolean))
+  const mal = new Set(library.map(e => e.mal_id).filter(Boolean))
+  return (anilistId: number, malId?: number | null) => !al.has(anilistId) && !(malId && mal.has(malId))
+}
+
 /** Combine per-source AniList recommendations into a ranked list. */
 export function rankRecommendations(
   library: AnimeWithEntry[],
@@ -117,6 +124,7 @@ export function rankRecommendations(
   opts: { exclude?: Set<number>; limit?: number } = {},
 ): Recommendation[] {
   const inLibrary = new Set(library.map(e => e.anilist_id).filter((x): x is number => !!x))
+  const isNew = notInLibrary(library)
   const exclude = opts.exclude ?? new Set<number>()
   const profile = tasteProfile(library)
   const { liked, disliked } = pickSources(library)
@@ -125,7 +133,7 @@ export function rankRecommendations(
   const visit = (src: AnimeWithEntry, w: number, negative: boolean) => {
     for (const r of recsBySource.get(src.anilist_id!) ?? []) {
       const m = r.media
-      if (!m || inLibrary.has(m.id) || exclude.has(m.id)) continue
+      if (!m || !isNew(m.id, m.idMal) || exclude.has(m.id)) continue
       // Skip sequels whose earlier season you haven't seen.
       const prequels = (m.relations?.edges ?? []).filter(x => x.relationType === 'PREQUEL').map(x => x.node.id)
       if (prequels.length && !prequels.some(id => inLibrary.has(id))) continue
@@ -194,14 +202,16 @@ export async function getPersonalRecommendations(
   const sig = signature(library)
   let exclude = new Set<number>()
   try { exclude = new Set(await window.api.db.getNotInterested()) } catch { /* */ }
+  const isNew = notInLibrary(library)
+  const ok = (r: Recommendation) => !exclude.has(r.anilistId) && isNew(r.anilistId, r.malId) // also cleans lists cached before a fix/import
   if (!opts.force && memo && memo.sig === sig && Date.now() - memo.at < LIST_TTL)
-    return memo.list.filter(r => !exclude.has(r.anilistId))
+    return memo.list.filter(ok)
   if (!opts.force) {
     try {
       const c = JSON.parse((await window.api.db.getAppState('recs_list')) ?? 'null')
       if (c && c.sig === sig && Date.now() - c.at < LIST_TTL) {
         memo = c
-        return c.list.filter((r: Recommendation) => !exclude.has(r.anilistId))
+        return c.list.filter(ok)
       }
     } catch { /* */ }
   }

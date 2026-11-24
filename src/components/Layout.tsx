@@ -1,6 +1,6 @@
 import { Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import TopNav from './TopNav'
+import TopNav, { NAV } from './TopNav'
 
 // Pages with a full-bleed hero banner: the nav floats transparently over it until you scroll.
 const HERO_ROUTES = [/^\/$/, /^\/anime\/[^/]+$/]
@@ -23,8 +23,7 @@ export default function Layout() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (e.key === 'Escape' && !document.querySelector('[data-command-palette]')) { navigate(-1); return }
       if (e.altKey && e.key >= '1' && e.key <= '7') {
-        const routes = ['/', '/coming-for-you', '/library', '/calendar', '/for-you', '/seasonal', '/stats']
-        navigate(routes[Number(e.key) - 1])
+        navigate(NAV[Number(e.key) - 1].to) // same order as the tabs in the bar
       }
     }
     window.addEventListener('keydown', handler)

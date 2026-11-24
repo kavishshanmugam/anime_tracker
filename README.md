@@ -4,18 +4,18 @@ A local-first desktop app that tracks your anime watching, syncs airing schedule
 
 ## Features
 
-- **Library management** — Watching, Completed, Plan to Watch, On Hold, Dropped with scores, notes, and progress tracking
+- **My List** — a MyAnimeList-style table of everything you've watched, are watching or plan to watch (tabs per status with counts; score, +1 episode and Watch/Rewatch on every row; poster grid view optional), with notes and progress tracking
 - **MAL / AniList import** — One-time migration from MyAnimeList XML export or AniList username
 - **Airing calendar** — Week and month views showing upcoming episodes for your shows
 - **Season watchdog** — Automatically detects sequels and spin-offs for shows you've watched
-- **Recommendations** — For You + a Home row: learns from what you complete (no ratings needed; low scores and drops count against similar shows), combines AniList recommendations across your favourites with your genre/tag taste, explains each pick, and filters by genre, Sub/Dub, airing and hidden gems
+- **Recommendations** — For You + a Home row: learns from what you complete (no ratings needed; low scores and drops count against similar shows), combines AniList recommendations across your favourites with your genre/tag taste, explains each pick, and filters by genre, Sub/Dub, airing and hidden gems; shows already in your lists (matched by AniList or MAL id) are never recommended, and Home's discovery rows skip what you've finished or dropped
 - **Seasonal browser** — Browse what's airing each season
 - **Stats** — Episodes watched, hours, genre breakdown, score distribution, watch heatmap
 - **Up Next** — Home lists every show you're watching whose next episode is out; airing shows you've caught up on move to *Caught Up* (with a countdown) and pop back the moment the next episode airs
 - **Sub / Dub** — pick per show from the episode list (applies to every episode); works both for sites that list the dub as a separate show (found under English titles and AniList alternate names) and for sites with Sub/Dub server buttons on one episode page (Senpai clicks the right one); falls back to sub when an episode has no dub
 - **English dub tracking** — dub status (complete / in progress / sub only) from the community MAL-Dubs list, DUB badges, Sub/Dub and airing filters, and a notification when a show's dub finishes
 - **Subtitles** — English subtitle tracks are switched on automatically; change or turn off from the player's ⚙ menu
-- **Streaming-style UI** — Top navigation, rotating hero banner, horizontal shelves, episode thumbnails & titles (AniList), series pages with episode grids, player with Up Next list
+- **Streaming-style UI** — Every section is a tab in the top bar (Home, My List, Browse, Seasonal, Calendar, For You, Sequels) with search, notifications, Stats and Settings beside them, rotating hero banner, horizontal shelves, episode thumbnails & titles (AniList), series pages with episode grids, player with Up Next list
 - **In-app streaming** — Locked-down player with skip intro/outro (AniSkip), true video fullscreen (⛶ on the video), an on-video ⚙ menu for 0.5–3x speed and "Best available" quality that steps down only when it buffers, auto progress tracking and next-episode prompt
 - **Self-healing sources** — Streaming sites are data-driven, health-checked, auto-failover between mirrors, and new domains are discovered automatically when one dies
 - **Security gate** — Every streaming domain is vetted (malware DNS filters, domain age, redirects, parked/fake-site detection) before the player will load it
@@ -114,7 +114,7 @@ Export anytime from **Settings → Library & Data** as JSON (or MAL XML).
 | Key | Action |
 |-----|--------|
 | Ctrl+K | Command palette / search |
-| Alt+1-7 | Jump between the main sections |
+| Alt+1-7 | Jump to a tab in the top bar (left to right) |
 | Escape | Go back |
 | S | Skip intro/outro (player) |
 | N / P | Next / previous episode (player) |

@@ -6,7 +6,7 @@ interface ProgressBarProps {
 }
 
 export default function ProgressBar({ current, total, accentColor, onIncrement }: ProgressBarProps) {
-  const pct = total ? Math.min((current / total) * 100, 100) : 100
+  const pct = total ? Math.min((current / total) * 100, 100) : current > 0 ? 100 : 0 // unknown length: empty until you start
 
   return (
     <div className="flex items-center gap-2">

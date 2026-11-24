@@ -182,6 +182,11 @@ console.log('\n[Recommendations]')
     assert.ok(s(104) < s(100)); assert.ok(s(103) < s(100))
   })
   test('genre taste is reported as matches', () => assert.ok(ranked[0].matches.includes('Fantasy')))
+  test('a show imported from MAL (no AniList id yet) is never recommended', () => {
+    const imported = { ...lib(7, {}, ['Fantasy']), anilist_id: null, mal_id: 34572 } as any
+    const r = rankRecommendations([...library, imported], new Map([[1, [node(media(105, ['Fantasy'], { idMal: 34572 })), node(media(100, ['Fantasy']))]]]))
+    assert.deepEqual(r.map(x => x.anilistId), [100])
+  })
 }
 
 // ---------- English dub status (MAL-Dubs list) ----------
