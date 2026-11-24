@@ -1,6 +1,10 @@
 import { Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
 import TopNav, { NAV } from './TopNav'
+import { loadProfile } from '@/hooks/useProfile'
+
+// "Open on: My List" (Settings → Profile) applies once, when the app starts.
+let startPageApplied = false
 
 // Pages with a full-bleed hero banner: the nav floats transparently over it until you scroll.
 const HERO_ROUTES = [/^\/$/, /^\/anime\/[^/]+$/]
@@ -15,6 +19,12 @@ export default function Layout() {
   const mainRef = useRef<HTMLElement>(null)
   const [scrolled, setScrolled] = useState(false)
   const hero = HERO_ROUTES.some(r => r.test(location.pathname))
+
+  useEffect(() => {
+    if (startPageApplied) return
+    startPageApplied = true
+    if (location.pathname === '/') loadProfile().then(p => { if (p.startPage === 'library') navigate('/library', { replace: true }) }).catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Global keyboard shortcuts
   useEffect(() => {

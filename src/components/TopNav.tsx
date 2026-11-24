@@ -4,6 +4,8 @@ import CommandPalette from './CommandPalette'
 import { useNotifications } from '@/hooks/useNotifications'
 import { syncAiringSchedules } from '@/lib/sync'
 import { dubChanges } from '@/lib/dubs'
+import { loadProfile, useProfile } from '@/hooks/useProfile'
+import { Avatar } from './ProfileSettings'
 
 // Every section is a tab in the bar (order = Alt+1…7 in Layout).
 export const NAV = [
@@ -44,6 +46,7 @@ export default function TopNav({ overlay = false }: { overlay?: boolean }) {
   const [menu, setMenu] = useState<'bell' | null>(null)
   const { notifications, unreadCount, addNotification, markAllRead, clearAll } = useNotifications()
   const close = () => setMenu(null)
+  const profile = useProfile()
   const bellRef = useOutside(menu === 'bell', close)
 
   useEffect(close, [location.pathname])
@@ -63,12 +66,13 @@ export default function TopNav({ overlay = false }: { overlay?: boolean }) {
     const run = async () => {
       try {
         const { notifications: notifs } = await syncAiringSchedules()
-        for (const n of notifs) addNotification(n)
+        const { notify } = await loadProfile() // Settings → Profile → Notifications
+        for (const n of notifs) if (n.type === 'sequel' ? notify.sequels : notify.episodes) addNotification(n)
       } catch { /* offline */ }
       // English dub news for shows in your lists (new dubs, dubs that finished).
       try {
         const library = await window.api.db.getLibrary()
-        for (const c of await dubChanges(library)) addNotification({ type: 'dub', ...c })
+        if ((await loadProfile()).notify.dubs) for (const c of await dubChanges(library)) addNotification({ type: 'dub', ...c })
       } catch { /* offline */ }
     }
     run()
@@ -153,6 +157,11 @@ export default function TopNav({ overlay = false }: { overlay?: boolean }) {
             className={`${iconBtn} ${location.pathname.startsWith('/stats') ? '!text-accent' : ''}`}>{Icon.stats}</button>
           <button onClick={() => navigate('/settings')} title="Settings"
             className={`${iconBtn} ${location.pathname.startsWith('/settings') ? '!text-accent' : ''}`}>{Icon.gear}</button>
+          <button onClick={() => navigate('/settings?tab=profile')} title={profile.name ? `${profile.name} — profile` : 'Set up your profile'}
+            className="ml-1 flex items-center gap-2 rounded-full p-1 pr-1 text-sm font-semibold text-text-2 hover:bg-white/5 hover:text-text-1 2xl:pr-3">
+            <Avatar profile={profile} />
+            {profile.name && <span className="hidden max-w-[120px] truncate 2xl:block">{profile.name}</span>}
+          </button>
         </div>
       </header>
 

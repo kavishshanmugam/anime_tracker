@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import ProfileSettings from '@/components/ProfileSettings'
 import { useSearchParams } from 'react-router-dom'
 import { useToast } from '@/hooks/useToast'
 import { parseMALExport, type MALImportResult } from '@/lib/mal-import'
@@ -18,7 +19,7 @@ const STATUS_LABELS: Record<MyStatus, string> = {
 
 export default function Settings() {
   const [params, setParams] = useSearchParams()
-  const tab = (['playback', 'sources', 'accounts', 'library', 'about'].includes(params.get('tab') ?? '') ? params.get('tab') : 'playback') as SettingsTab
+  const tab = (['profile', 'playback', 'sources', 'accounts', 'library', 'about'].includes(params.get('tab') ?? '') ? params.get('tab') : 'profile') as SettingsTab
   const setTab = (t: SettingsTab) => setParams({ tab: t }, { replace: true })
   const { toast } = useToast()
   const [dataPath, setDataPath] = useState('')
@@ -206,6 +207,7 @@ export default function Settings() {
       <div className="space-y-4">
         <h1 className="font-display text-3xl font-black text-text-1">Settings</h1>
         <div className="flex gap-6 overflow-x-auto border-b border-border">
+          {tabBtn('profile', 'Profile')}
           {tabBtn('playback', 'Playback')}
           {tabBtn('sources', 'Sources')}
           {tabBtn('accounts', 'Accounts')}
@@ -213,6 +215,8 @@ export default function Settings() {
           {tabBtn('about', 'About')}
         </div>
       </div>
+
+      {tab === 'profile' && <ProfileSettings />}
 
       {tab === 'playback' && (<>
       <PlaybackDefaults />
@@ -394,7 +398,7 @@ export default function Settings() {
   )
 }
 
-type SettingsTab = 'playback' | 'sources' | 'accounts' | 'library' | 'about'
+type SettingsTab = 'profile' | 'playback' | 'sources' | 'accounts' | 'library' | 'about'
 
 function PlaybackDefaults() {
   const [audio, setAudio] = useState<'sub' | 'dub'>('sub')

@@ -16,6 +16,7 @@ import { displayTitle } from '@/lib/title'
 import { announceCompleted } from '@/components/FinishedModal'
 import { watchPath } from '@/lib/watch'
 import { progressAfterWatching } from '@/lib/progress'
+import { useProfile } from '@/hooks/useProfile'
 
 type SortKey = 'last_updated' | 'title' | 'score' | 'progress'
 type ViewMode = 'grid' | 'list'
@@ -63,6 +64,7 @@ export default function Library() {
   const [audioFilter, setAudioFilter] = useState<'' | 'dub' | 'dub_complete' | 'sub_only'>('')
   const [airingFilter, setAiringFilter] = useState<'' | 'RELEASING' | 'FINISHED'>('')
   const dubOf = useDubs()
+  const { name } = useProfile()
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: entries.length }
@@ -199,7 +201,7 @@ export default function Library() {
     <div className="flex flex-col h-full">
       {/* Header + tabs */}
       <div className="sticky top-[60px] z-20 -mx-4 space-y-4 bg-bg-0/95 px-4 pt-2 pb-3 backdrop-blur lg:-mx-10 lg:px-10">
-        <h1 className="font-display text-3xl font-black text-text-1">My List</h1>
+        <h1 className="font-display text-3xl font-black text-text-1">{name.trim() ? `${name.trim()}'s List` : 'My List'}</h1>
         <div className="flex items-center gap-6 overflow-x-auto border-b border-border">
           {STATUS_TABS.map(tab => (
             <button
